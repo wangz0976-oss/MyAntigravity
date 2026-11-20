@@ -1,0 +1,9 @@
+/.work/
+/local/
+/dist/
+/data/
+**/bin/
+**/obj/
+.vs/
+*.user
+*.suo

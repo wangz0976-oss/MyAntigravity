@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <AssemblyName>MyAntigravity</AssemblyName>
+    <Product>MyAntigravity</Product>
+    <Company>wangz0976-oss</Company>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../MyAntigravity.Core/MyAntigravity.Core.csproj" />
+  </ItemGroup>
+</Project>
