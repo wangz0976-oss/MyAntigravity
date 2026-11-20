@@ -35,6 +35,84 @@ if (args is ["--live", var executable])
 }
 
 int testCount = 0;
+await Case("长消息的代码块、行号和链接定位", () =>
+{
+    string fence = new('\x60', 3);
+    string text = $"说明 [文档](https://example.test/guide)\n{fence}python\n  x = 1\nhttps://example.test/code\n{fence}\n" +
+        "其他 https://example.test/more. file:///C:/private\n~~~text\n尚未闭合";
+    var outline = MessageOutline.Parse(text);
+    Check(outline.CodeBlocks is [{ Line: 2, Language: "python" }, { Line: 7, Language: "text" }],
+        "围栏类型、语言和块顺序");
+    var first = outline.CodeBlocks[0];
+    Check(first.Code == "  x = 1\nhttps://example.test/code\n" && text[first.Offset..first.End] == first.Code &&
+        outline.CodeBlocks[1].Code == "尚未闭合", "复制保留缩进，支持流式尚未关闭的块");
+    Check(outline.Links is [{ Line: 1, Address: "https://example.test/guide" },
+        { Line: 6, Address: "https://example.test/more" }] &&
+        text.AsSpan(outline.Links[1].Offset).StartsWith(outline.Links[1].Address), "位置准确，代码里的网址不当作链接");
+    return Task.CompletedTask;
+});
+
+await Case("Git 工作区只读查询及逐段差异", async () =>
+{
+    var repo = Directory.CreateDirectory(Path.Combine(scratch, "Git 审查 " + Guid.NewGuid().ToString("N"))).FullName;
+    var path = Path.Combine(repo, "带 空格 [测试].txt");
+    await Git("init", "-q");
+    File.WriteAllText(path, "第一行\n中间行\n最后一行\n");
+    await Git("add", "--", Path.GetFileName(path));
+    await Git("-c", "user.name=MyAntigravity test", "-c", "user.email=test@example.invalid",
+        "-c", "commit.gpgsign=false", "commit", "-qm", "fixture");
+    File.WriteAllText(path, "第一行已暂存\n中间行\n最后一行\n");
+    await Git("add", "--", Path.GetFileName(path));
+    File.WriteAllText(path, "第一行已暂存\n中间行\n最后一行未暂存\n");
+    File.WriteAllText(Path.Combine(repo, "新文件.txt"), "未跟踪内容\n");
+    var review = (await GitReview.OpenAsync(repo))!;
+    var entries = await review.ListAsync();
+    Check(entries is [{ Scope: GitChangeScope.Staged }, { Scope: GitChangeScope.Worktree }, { Scope: GitChangeScope.Untracked }],
+        "有双层改动的文件分别列出");
+    var staged = GitReview.ReadSections(await review.ReadPatchAsync(entries[0]));
+    var unstaged = GitReview.ReadSections(await review.ReadPatchAsync(entries[1]));
+    var untracked = GitReview.ReadSections(await review.ReadPatchAsync(entries[2]));
+    Check(staged.Count == 1 && staged[0].NewLine == 1 && staged[0].Added.SequenceEqual(["第一行已暂存"]),
+        "带空格和中括号的路径按字面匹配");
+    Check(unstaged.Count == 1 && unstaged[0].NewLine == 3 && unstaged[0].Added.SequenceEqual(["最后一行未暂存"]),
+        "分开显示索引和工作区中的修改");
+    Check(untracked.Count == 1 && untracked[0].NewLine == 1 && untracked[0].Added.SequenceEqual(["未跟踪内容"]) &&
+        (await review.ListAsync()).SequenceEqual(entries), "未跟踪文件可审查，状态未被更改");
+
+    async Task Git(params string[] arguments)
+    {
+        using var process = Process.Start(Cli.StartInfo(OperatingSystem.IsWindows() ? "git.exe" : "git", repo, true,
+            ["-c", $"core.hooksPath={Path.Combine(repo, "no-test-hooks")}", .. arguments]))!;
+        var error = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        Check(process.ExitCode == 0, await error);
+    }
+});
+
+await Case("消息列表归并流式片段并保留原文", () =>
+{
+    var history = new ConversationTranscript();
+    history.Add(MessageSpeaker.User, "第一轮");
+    var running = history.AppendChunk(MessageSpeaker.Assistant, "第一行\n", null, out bool started);
+    Check(started && ReferenceEquals(running,
+        history.AppendChunk(MessageSpeaker.Assistant, "第二行", null, out started)) && !started,
+        "缺少消息 ID 的相邻片段归到同一条");
+    history.Add(MessageSpeaker.FollowUp, "请补充");
+    history.AppendChunk(MessageSpeaker.Assistant, "代码\n" + new string('甲', 100), "reply-1", out started);
+    Check(started && history.Messages.Count == 4 && running.Text == "第一行\n第二行" &&
+        history.Messages[3].ToString().EndsWith('…') && history.Messages[3].Text.Length == 103,
+        "追加指令划分消息，预览截断时保留全文");
+    history.AppendChunk(MessageSpeaker.Assistant, "另一条回复", "reply-2", out started);
+    Check(started && history.Messages.Count == 5, "同角色的新消息 ID 开启新列表项");
+    history.EndChunks();
+    history.AppendChunk(MessageSpeaker.Assistant, "下一轮", "reply-2", out started);
+    Check(started && history.Messages.Count == 6, "结束流之后开启新列表项");
+    history.Clear();
+    Check(history.Messages.Count == 0 && history.Add(MessageSpeaker.Notice, "提示").Index == 0,
+        "清空会话后重新编号");
+    return Task.CompletedTask;
+});
+
 await Case("路径、设置和会话索引", () =>
 {
     var project = Path.Combine(scratch, "空格 项目");
@@ -53,11 +131,14 @@ await Case("路径、设置和会话索引", () =>
     var file = new SettingsFile(scratch);
     file.Save(settings);
     settings.UpdateChannel = "stable";
+    settings.EnterToSend = true;
+    settings.AutoReadReply = true;
     file.Save(settings);
     var restored = file.Load();
     Check(restored.Projects.SequenceEqual([project]) && restored.Sessions.Count == 2 &&
         restored.Sessions[0] is { Id: "id-1", Title: "我的测试会话" } && !restored.Announce &&
-        restored.UpdateChannel == "stable", "往返、去重、保存与保留本地会话名称");
+        restored.UpdateChannel == "stable" && restored.EnterToSend && restored.AutoReadReply,
+        "往返、去重、保存与保留本地会话名称和阅读设置");
     LocalSession[] official =
     [
         new("id-1", project, "官方标题", DateTimeOffset.UtcNow),

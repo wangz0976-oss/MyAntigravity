@@ -155,7 +155,7 @@ internal sealed partial class MainForm
             officialSessions = [];
             activeTitles.Clear();
             ClearConversation();
-            log.Clear();
+            activity.Clear();
             context.Text = "当前项目：未选择";
             PopulateSessions();
         }

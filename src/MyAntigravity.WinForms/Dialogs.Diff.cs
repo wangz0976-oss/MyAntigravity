@@ -2,20 +2,23 @@ namespace MyAntigravity;
 
 internal static partial class Dialogs
 {
-    private sealed record ReviewFile(string Path, FileChange[] Revisions)
+    private sealed record ReviewRevision(string Label, Func<string> Describe, Func<IReadOnlyList<DiffSection>> ReadSections);
+
+    private sealed record ReviewFile(string Path, ReviewRevision[] Revisions, string? Scope = null)
     {
-        public override string ToString() => $"{AgentText.Visible(Path)}，{Revisions.Length} 次修改";
+        public override string ToString() => $"{AgentText.Visible(Path)}，{Scope ?? $"{Revisions.Length} 次修改"}";
     }
 
-    private sealed record ReviewSection(int Revision, FileChange Change, DiffSection? Section)
+    private sealed record ReviewSection(ReviewFile File, ReviewRevision Revision, DiffSection? Section)
     {
-        public override string ToString() => $"第 {Revision} 次修改 · {Section?.Label ?? "全文比较"}";
+        public override string ToString() => $"{Revision.Label} · {Section?.Label ?? "全文比较"}";
     }
 
     internal static void ReviewChanges(Form owner, IEnumerable<FileChange> changes, CancellationToken cancellation = default)
     {
         var files = changes.GroupBy(change => change.Path, StringComparer.OrdinalIgnoreCase)
-            .Select(group => new ReviewFile(group.Key, group.ToArray())).ToArray();
+            .Select(group => new ReviewFile(group.Key, group.Select((change, i) =>
+                new ReviewRevision($"第 {i + 1} 次修改", change.Describe, () => DiffSections.Build(change))).ToArray())).ToArray();
         if (cancellation.IsCancellationRequested)
             return;
         if (files.Length == 0)
@@ -23,10 +26,21 @@ internal static partial class Dialogs
             Text(owner, "文件差异审查", "当前会话尚未收到文件差异。");
             return;
         }
+        Review(owner, "文件差异审查", files, cancellation);
+    }
 
+    internal static void ReviewGitPatch(Form owner, GitChange change, string patch)
+    {
+        string details = patch.Length == 0 ? "当前状态没有可显示的文本差异。文件可能已变化，可返回后重新打开项目改动。" : AgentText.Visible(patch);
+        var revision = new ReviewRevision(change.ScopeLabel, () => details, () => GitReview.ReadSections(patch));
+        Review(owner, "Git 文件差异", [new ReviewFile(change.Path, [revision], change.ScopeLabel)], default);
+    }
+
+    private static void Review(Form owner, string title, ReviewFile[] files, CancellationToken cancellation)
+    {
         using var form = new DiffWindow
         {
-            Text = "文件差异审查", ClientSize = new Size(1000, 640), MinimumSize = new Size(590, 400),
+            Text = title, ClientSize = new Size(1000, 640), MinimumSize = new Size(590, 400),
             ShowInTaskbar = true, StartPosition = FormStartPosition.CenterParent,
             AutoScaleMode = AutoScaleMode.Dpi, MinimizeBox = false
         };
@@ -60,14 +74,13 @@ internal static partial class Dialogs
                 sections.Items.Clear();
                 if (paths.SelectedItem is ReviewFile file)
                 {
-                    for (int i = 0; i < file.Revisions.Length; i++)
+                    foreach (var revision in file.Revisions)
                     {
-                        var change = file.Revisions[i];
-                        var items = DiffSections.Build(change);
+                        var items = revision.ReadSections();
                         if (items.Count == 0)
-                            sections.Items.Add(new ReviewSection(i + 1, change, null));
+                            sections.Items.Add(new ReviewSection(file, revision, null));
                         else
-                            sections.Items.AddRange(items.Select(section => new ReviewSection(i + 1, change, section)).ToArray());
+                            sections.Items.AddRange(items.Select(section => new ReviewSection(file, revision, section)).ToArray());
                     }
                 }
                 if (sections.Items.Count > 0)
@@ -80,9 +93,9 @@ internal static partial class Dialogs
         {
             if (sections.SelectedItem is not ReviewSection selected)
                 return;
-            details.Text = $"文件：{AgentText.Visible(selected.Change.Path)}\n"
-                + $"差异段 {sections.SelectedIndex + 1} / {sections.Items.Count}，第 {selected.Revision} 次修改\n\n"
-                + (selected.Section?.Describe() ?? selected.Change.Describe());
+            details.Text = $"文件：{AgentText.Visible(selected.File.Path)}\n"
+                + $"差异段 {sections.SelectedIndex + 1} / {sections.Items.Count}，{selected.Revision.Label}\n\n"
+                + (selected.Section?.Describe() ?? selected.Revision.Describe());
             details.Select(0, 0);
             details.ScrollToCaret();
         }
@@ -105,7 +118,7 @@ internal static partial class Dialogs
         {
             if (sections.SelectedItem is not ReviewSection selected)
                 return;
-            details.Text = selected.Change.Describe();
+            details.Text = selected.Revision.Describe();
             details.Select(0, 0);
             details.Focus();
             details.ScrollToCaret();

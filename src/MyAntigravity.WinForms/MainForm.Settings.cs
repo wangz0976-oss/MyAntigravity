@@ -8,7 +8,8 @@ internal sealed partial class MainForm
 
     private async Task EditSettingsAsync()
     {
-        using var window = Dialogs.Window("MyAntigravity 设置", new Size(640, 350));
+        using var window = Dialogs.Window("MyAntigravity 设置", new Size(640, 455));
+        window.ShowInTaskbar = true;
         var path = new TextBox { Text = settings.Executable ?? "", AccessibleName = "官方 CLI 完整路径", Dock = DockStyle.Top, TabIndex = 0 };
         var browse = new Button { Text = "选择 agy.exe (&B)", AutoSize = true, TabIndex = 1 };
         var announce = new CheckBox
@@ -25,6 +26,17 @@ internal sealed partial class MainForm
         };
         channel.Items.AddRange(["稳定版 (Stable)", "测试版 (Beta)"]);
         channel.SelectedIndex = settings.UpdateChannel == "stable" ? 0 : 1;
+        var sendKey = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList, AccessibleName = "发送消息按键", Width = 275, TabIndex = 5
+        };
+        sendKey.Items.AddRange(["Ctrl+Enter 发送，Enter 换行", "Enter 发送，Ctrl+Enter 换行"]);
+        sendKey.SelectedIndex = settings.EnterToSend ? 1 : 0;
+        var autoRead = new CheckBox
+        {
+            Text = "自动朗读已完成的新回复 (&R)", AutoSize = true, Checked = settings.AutoReadReply,
+            AccessibleDescription = "通过争渡接口朗读。历史回放和没有完成的回复不会触发。", TabIndex = 6
+        };
 
         browse.Click += (_, _) =>
         {
@@ -33,8 +45,8 @@ internal sealed partial class MainForm
                 path.Text = picker.FileName;
         };
 
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 8, AutoScroll = true };
-        for (int i = 0; i < 7; i++)
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 11, AutoScroll = true };
+        for (int i = 0; i < 10; i++)
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.Controls.Add(Caption("CLI 完整路径（留空时自动检测）"), 0, 0);
@@ -44,6 +56,9 @@ internal sealed partial class MainForm
         layout.Controls.Add(sandbox, 0, 4);
         layout.Controls.Add(Caption("更新渠道"), 0, 5);
         layout.Controls.Add(channel, 0, 6);
+        layout.Controls.Add(Caption("发送消息按键"), 0, 7);
+        layout.Controls.Add(sendKey, 0, 8);
+        layout.Controls.Add(autoRead, 0, 9);
         var save = new Button { Text = "保存 (&S)", AutoSize = true };
         var back = new Button { Text = "取消 (&C)", AutoSize = true, DialogResult = DialogResult.Cancel };
         save.Click += (_, _) =>
@@ -72,6 +87,8 @@ internal sealed partial class MainForm
             || sandbox.Checked != settings.Sandbox;
         settings.Executable = configured;
         settings.Announce = announce.Checked;
+        settings.EnterToSend = sendKey.SelectedIndex == 1;
+        settings.AutoReadReply = autoRead.Checked;
         settings.Sandbox = sandbox.Checked;
         settings.UpdateChannel = channel.SelectedIndex == 0 ? "stable" : "beta";
         storage.Save(settings);

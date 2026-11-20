@@ -9,7 +9,6 @@ internal sealed partial class MainForm : Form
     private readonly string dataDirectory;
     private readonly SettingsFile storage;
     private readonly LocalSettings settings;
-    private readonly StringBuilder log = new();
     private readonly StringBuilder latestReply = new();
     private readonly Dictionary<(string ToolId, string Path, int Index), FileChange> changes = [];
     private readonly Dictionary<string, string> toolTitles = new(StringComparer.Ordinal);
@@ -18,7 +17,6 @@ internal sealed partial class MainForm : Form
     private AcpAgent? agent;
     private string? project;
     private string? sessionId;
-    private string? replayRole;
     private string? queuedActivity;
     private string? contextUsage;
     private string? lastTurnUsage;
@@ -73,6 +71,10 @@ internal sealed partial class MainForm : Form
         quickProject.Click += async (_, _) => await FindProjectAsync();
         addProject.Click += async (_, _) => await ChooseProjectAsync();
         openProject.Click += async (_, _) => await OpenSelectedProjectAsync();
+        openProjectMenu.Click += async (_, _) => await OpenSelectedProjectAsync();
+        projectExplorer.Click += async (_, _) => await ShowSelectedFolderAsync();
+        copyProjectPath.Click += async (_, _) => await CopySelectedFolderAsync();
+        projectChanges.Click += async (_, _) => await ShowProjectChangesAsync();
         newSession.Click += async (_, _) => await StartSessionAsync(null);
         restore.Click += async (_, _) => await RestoreSelectedAsync();
         findHistory.Click += async (_, _) => await FindSessionAsync();
@@ -89,8 +91,10 @@ internal sealed partial class MainForm : Form
         additionalDirectories.Click += async (_, _) => await EditAdditionalDirectoriesAsync();
         WireHistoryContextMenu();
         WireProjectContextMenu();
+        WireMessageList();
         openSession.Click += async (_, _) => await RestoreSelectedAsync();
         refresh.Click += async (_, _) => await RunAsync(RefreshSessionsAsync);
+        officialHistory.Click += async (_, _) => await ShowOfficialHistoryAsync();
         disconnect.Click += async (_, _) => await DisconnectNowAsync();
         optionsMenu.Click += async (_, _) => await SelectOptionAsync();
         showOptions.Click += async (_, _) => await SelectOptionAsync();
@@ -101,6 +105,7 @@ internal sealed partial class MainForm : Form
         updatesMenu.Click += async (_, _) => await RunAsync(ShowUpdatesAsync);
         extensionHub.Click += async (_, _) => await ShowExtensionHubAsync();
         send.Click += async (_, _) => await SendAsync();
+        sendMessageMenu.Click += async (_, _) => await SendAsync();
         steer.Click += async (_, _) => await SendSteeringAsync();
         steerMenu.Click += async (_, _) => await SendSteeringAsync();
         cancel.Click += async (_, _) => await RequestCancellationAsync();
@@ -118,21 +123,20 @@ internal sealed partial class MainForm : Form
             UpdateComposerCommands();
         };
 
-        var official = Item("查看 CLI 列出的历史 (&I)", action: () => RunAsync(async () =>
-        {
-            if (project is null)
-                throw new InvalidOperationException("请先选择项目。");
-            if (!showOfficialHistory && MessageBox.Show(this,
-                "官方 CLI 可能会在当前目录下列出其他项目的旧会话。请根据标题确认所属项目，再恢复会话。打开官方列表吗？",
-                "查看官方历史", MessageBoxButtons.OKCancel, MessageBoxIcon.Information,
-                MessageBoxDefaultButton.Button2) != DialogResult.OK)
-                return;
-            showOfficialHistory = true;
-            await RefreshSessionsAsync();
-        }));
-        if (refresh.OwnerItem is ToolStripMenuItem sessionMenu)
-            sessionMenu.DropDownItems.Insert(3, official);
     }
+
+    private Task ShowOfficialHistoryAsync() => RunAsync(async () =>
+    {
+        if (project is null)
+            return;
+        if (!showOfficialHistory && MessageBox.Show(this,
+            "官方 CLI 可能会在当前目录下列出其他项目的旧会话。请根据标题确认所属项目，再恢复会话。打开官方列表吗？",
+            "查看官方历史", MessageBoxButtons.OKCancel, MessageBoxIcon.Information,
+            MessageBoxDefaultButton.Button2) != DialogResult.OK)
+            return;
+        showOfficialHistory = true;
+        await RefreshSessionsAsync();
+    });
 
     private async Task RunAsync(Func<Task> operation, bool isPrompt = false)
     {
@@ -170,11 +174,11 @@ internal sealed partial class MainForm : Form
         var idle = !busy && !closing;
         addProject.Enabled = chooseProject.Enabled = settingsMenu.Enabled = updatesMenu.Enabled = extensionHub.Enabled =
             browserLogin.Enabled = terminalLogin.Enabled = detect.Enabled = idle;
-        openProject.Enabled = idle && projects.SelectedItem is string;
-        removeProject.Enabled = openProject.Enabled;
-        additionalDirectories.Enabled = idle && project is not null;
+        openProject.Enabled = openProjectMenu.Enabled = projectExplorer.Enabled = copyProjectPath.Enabled =
+            removeProject.Enabled = idle && projects.SelectedItem is string;
+        additionalDirectories.Enabled = projectChanges.Enabled = idle && project is not null;
         quickProject.Enabled = idle && settings.Projects.Count > 0;
-        newSession.Enabled = refresh.Enabled = idle && project is not null;
+        newSession.Enabled = refresh.Enabled = officialHistory.Enabled = idle && project is not null;
         restore.Enabled = openSession.Enabled = idle && project is not null && sessions.SelectedItem is LocalSession;
         removeSession.Enabled = restore.Enabled;
         findHistory.Enabled = idle && sessions.Items.Count > 0;
@@ -214,13 +218,13 @@ internal sealed partial class MainForm : Form
         officialSessions = [];
         activeTitles.Clear();
         ClearConversation();
-        log.Clear();
+        activity.Clear();
         settings.RememberProject(fullPath);
         ReloadProjects();
         PopulateSessions();
         context.Text = $"当前项目：{project}";
         storage.Save(settings);
-        SetStatus("已打开项目。按 Ctrl+N 新建会话，或在历史列表打开已有会话。", speak: true);
+        SetStatus("已打开项目。从“会话”菜单新建，或在历史列表打开已有会话。", speak: true);
         sessions.Focus();
     }
 
@@ -246,7 +250,7 @@ internal sealed partial class MainForm : Form
 
         await ResetAgentAsync();
         var executable = Cli.Find(settings.Executable) ??
-            throw new FileNotFoundException("找不到 Google Antigravity CLI。请打开“账户 → 官方 CLI 安装指南”，或在“工具 → 设置”选择 agy.exe。");
+            throw new FileNotFoundException("找不到 Google Antigravity CLI。请打开“账户 → 官方 CLI 安装指南”，或在“设置 → 常规设置”选择 agy.exe。");
         var current = new AcpAgent(AcpStartInfo(executable, WorkingDirectory()), AskPermissionAsync, AskQuestionAsync);
         connectedExecutable = executable;
         current.SessionUpdated += (id, data) => Post(() =>
@@ -399,7 +403,7 @@ internal sealed partial class MainForm : Form
             return;
         if (requested is not null && sessionId == requested && agent is { Connected: true })
         {
-            chat.Focus();
+            messages.Focus();
             SetStatus("该会话已打开。");
             return;
         }
@@ -445,16 +449,12 @@ internal sealed partial class MainForm : Form
         SwitchDraft(sessionId);
         RememberActive();
         PopulateSessions(sessionId);
-        replayRole = null;
-        if (requested is not null && current.CanReplay)
-        {
-            chat.Select(0, 0);
-            chat.ScrollToCaret();
-        }
-        SetStatus(requested is null ? "会话已创建，按 Ctrl+Enter 发送消息。"
+        transcript.EndChunks();
+        RenderMessages();
+        SetStatus(requested is null ? "会话已创建。可从“消息”菜单发送。"
             : current.CanReplay ? "历史会话已恢复。" : "会话已恢复，当前 CLI 不回放历史消息。");
-        if (requested is not null && current.CanReplay && chat.TextLength > 0)
-            chat.Focus();
+        if (requested is not null && current.CanReplay && messages.Items.Count > 0)
+            messages.Focus();
         else
             input.Focus();
     });
@@ -463,11 +463,10 @@ internal sealed partial class MainForm : Form
     {
         sessionId = null;
         SwitchDraft(null);
-        replayRole = null;
         options = [];
         availableCommands = [];
         pendingSessionMetadata = null;
-        chat.Clear();
+        ClearMessages();
         latestReply.Clear();
         changes.Clear();
         toolTitles.Clear();
@@ -503,8 +502,7 @@ internal sealed partial class MainForm : Form
                 ? "\n图片附件：" + string.Join("、", images.Select(image => image.Name)) : "";
             if (files.Length > 0)
                 attachmentText += "\n文本与代码附件：" + string.Join("、", files.Select(file => file.Name));
-            AppendChat($"\n你：\n{text}{attachmentText}\n\nAgent：\n");
-            replayRole = "agent";
+            AddMessage(MessageSpeaker.User, text + attachmentText);
             SetStatus("任务进行中。");
             try
             {
@@ -516,7 +514,11 @@ internal sealed partial class MainForm : Form
                 if (reason == "cancelled")
                     SetStatus("任务已中止。", speak: true);
                 else if (reason == "end_turn")
-                    SetStatus("回复已完成。按 Ctrl+Shift+R 朗读最新回复。", speak: true);
+                {
+                    bool spoken = settings.AutoReadReply &&
+                        ScreenReaderSpeech.TrySpeak(latestReply.ToString().Trim(), interrupt: false);
+                    SetStatus("回复已完成。可在消息列表阅读全文。", speak: !spoken);
+                }
                 else
                     SetStatus($"Agent 本轮已结束。原因：{AgentText.Visible(reason ?? "CLI 未报告")}。");
 
@@ -531,9 +533,9 @@ internal sealed partial class MainForm : Form
             }
             finally
             {
-                replayRole = null;
+                transcript.EndChunks();
                 if (!closing)
-                    AppendChat("\n");
+                    RenderMessages();
             }
         }, isPrompt: true);
     }
@@ -586,7 +588,8 @@ internal sealed partial class MainForm : Form
     private Task<string?> AskPermissionAsync(PermissionRequest request, CancellationToken cancellation) =>
         AskDuringTurnAsync<string?>(request.SessionId, cancellation, null, () =>
         {
-            SetStatus("Agent 请求工具审批。请查看详情。", speak: true);
+            Log(request.Description, "等待工具审批");
+            SetStatus("Agent 请求工具审批。请查看详情。", record: false, speak: true);
             var selected = Dialogs.Permission(Form.ActiveForm ?? this, request, cancellation, RequestCancellationAsync);
             Log("审批：" + (request.Options.FirstOrDefault(item => item.Id == selected)?.ToString() ?? "已取消"));
             if (!cancellation.IsCancellationRequested)
@@ -597,7 +600,8 @@ internal sealed partial class MainForm : Form
     private Task<ElicitationResponse> AskQuestionAsync(ElicitationRequest request, CancellationToken cancellation) =>
         AskDuringTurnAsync(request.SessionId, cancellation, ElicitationResponse.Cancelled, () =>
         {
-            SetStatus("Agent 有问题需要你回答。", speak: true);
+            Log(AgentText.Visible(request.Message), "等待回答 Agent 的问题");
+            SetStatus("Agent 有问题需要你回答。", record: false, speak: true);
             var answer = Dialogs.Elicitation(Form.ActiveForm ?? this, request, cancellation, RequestCancellationAsync);
             if (!cancellation.IsCancellationRequested)
             {
@@ -661,23 +665,20 @@ internal sealed partial class MainForm : Form
         {
             case "agent_message_chunk":
             case "user_message_chunk":
-                var role = kind == "agent_message_chunk" ? "agent" : "user";
-                if (role == "user" && prompting)
+                var speaker = kind == "agent_message_chunk" ? MessageSpeaker.Assistant : MessageSpeaker.User;
+                if (speaker == MessageSpeaker.User && prompting)
                     break;
                 if (data.ValueKind != JsonValueKind.Object || !data.TryGetProperty("content", out var message) ||
-                    StringValue(message, "text") is not { } text)
+                    StringValue(message, "text") is not { Length: > 0 } text)
                     break;
                 var visible = AgentText.Visible(text);
-                if (replayRole != role)
+                var entry = transcript.AppendChunk(speaker, visible, StringValue(data, "messageId"), out bool started);
+                updatedMessages.Add(entry.Index);
+                messageRefresh.Start();
+                if (speaker == MessageSpeaker.Assistant)
                 {
-                    AppendChat(role == "agent" ? "\n\nAgent：\n" : "\n\n你：\n");
-                    if (role == "agent")
+                    if (started && !prompting)
                         latestReply.Clear();
-                }
-                replayRole = role;
-                AppendChat(visible);
-                if (role == "agent")
-                {
                     latestReply.Append(visible);
                     readReplyMenu.Enabled = latestReply.Length > 0;
                 }
@@ -719,7 +720,16 @@ internal sealed partial class MainForm : Form
                     toolTitles.TryGetValue(toolId, out title);
 
                 var details = AgentText.ToolDetails(data);
-                Log(title is null || StringValue(data, "title") is not null ? details : $"{AgentText.Visible(title)}\n{details}");
+                var phase = StringValue(data, "status") switch
+                {
+                    "completed" => "已完成",
+                    "failed" => "失败",
+                    "pending" => "等待执行",
+                    _ => "正在执行"
+                };
+                string summary = $"{phase}：{AgentText.Visible(title ?? "工具操作")}";
+                Log(title is null || StringValue(data, "title") is not null ? details : $"{AgentText.Visible(title)}\n{details}",
+                    summary);
                 int diffIndex = 0;
                 foreach (var diff in AgentText.Changes(data))
                 {
@@ -728,14 +738,7 @@ internal sealed partial class MainForm : Form
                 }
                 if (prompting)
                 {
-                    var phase = StringValue(data, "status") switch
-                    {
-                        "completed" => "已完成",
-                        "failed" => "失败",
-                        "pending" => "等待执行",
-                        _ => "正在执行"
-                    };
-                    queuedActivity = $"{phase}：{AgentText.Visible(title ?? "工具操作")}";
+                    queuedActivity = summary;
                     activityTimer.Start();
                 }
                 break;
@@ -750,18 +753,6 @@ internal sealed partial class MainForm : Form
                 contextUsage = SessionUsage.Context(data);
                 break;
         }
-    }
-
-    private void AppendChat(string value)
-    {
-        var caret = chat.SelectionStart;
-        var length = chat.SelectionLength;
-        bool reading = chat.Focused;
-        chat.AppendText(value);
-        if (reading)
-            chat.Select(caret, length);
-        else
-            chat.ScrollToCaret();
     }
 
     private void SetStatus(string text, bool record = true, bool speak = false)
@@ -783,7 +774,6 @@ internal sealed partial class MainForm : Form
             Dialogs.Text(this, "最新回复", response);
     }
 
-    private void Log(string text) => log.Append('[').Append(DateTime.Now.ToString("HH:mm:ss")).Append("] ").AppendLine(text).AppendLine();
 
     private Task ShowStatusAsync()
     {
@@ -794,7 +784,6 @@ internal sealed partial class MainForm : Form
         return Task.CompletedTask;
     }
 
-    private void ShowLog() => Dialogs.Text(this, "任务日志", log.Length > 0 ? log.ToString() : "当前没有任务记录。");
     private void ShowDiff() => Dialogs.ReviewChanges(this, changes.Values);
 
     private void ReportError(string text)
@@ -830,6 +819,7 @@ internal sealed partial class MainForm : Form
             return;
         closing = true;
         activityTimer.Dispose();
+        messageRefresh.Dispose();
         if (agent is not null)
         {
             var current = agent;

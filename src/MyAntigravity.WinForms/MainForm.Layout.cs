@@ -6,8 +6,8 @@ internal sealed partial class MainForm : Form
 {
     private readonly ListBox projects = new() { AccessibleName = "项目列表", AccessibleDescription = "回车打开。Delete 从项目列表移除。Shift 加 F10 打开操作菜单。", Dock = DockStyle.Fill, IntegralHeight = false };
     private readonly ListBox sessions = new() { AccessibleName = "历史会话", AccessibleDescription = "回车恢复，F2 重命名，Delete 删除本机历史记录。Shift 加 F10 打开操作菜单。", Dock = DockStyle.Fill, IntegralHeight = false };
-    private readonly RichTextBox chat = ReadableText("会话消息");
-    private readonly TextBox input = new() { Multiline = true, AcceptsReturn = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, AccessibleName = "消息输入", AccessibleDescription = "Ctrl 加回车发送。回车换行。Ctrl 加 Shift 加 P 查找官方命令。" };
+    private readonly ComposerTextBox input = new() { Multiline = true, AcceptsReturn = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, AccessibleName = "消息输入" };
+    private readonly Label inputCaption = Caption("消息输入");
     private readonly Label status = new() { Text = "请选择本地项目，或从账户菜单登录。", Dock = DockStyle.Fill, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft };
     private readonly Button send = new() { Text = "发送 (&S)", AutoSize = true, Enabled = false };
     private readonly Button cancel = new() { Text = "中止 (&X)", AutoSize = true, Enabled = false };
@@ -23,16 +23,22 @@ internal sealed partial class MainForm : Form
     private readonly ToolStripMenuItem imageMenu = Item("图片附件 (&I)", Keys.Control | Keys.Shift | Keys.I);
     private readonly ToolStripMenuItem textAttachmentsMenu = Item("文本与代码附件 (&J)", Keys.Control | Keys.Shift | Keys.J);
     private readonly ToolStripMenuItem refresh = Item("刷新历史会话 (&R)", Keys.Control | Keys.R);
+    private readonly ToolStripMenuItem officialHistory = Item("查看官方历史 (&I)");
     private readonly ToolStripMenuItem disconnect = Item("断开并停止 ACP (&D)", Keys.Control | Keys.Shift | Keys.D);
     private readonly ToolStripMenuItem optionsMenu = Item("模型、权限模式与推理 (&M)", Keys.Control | Keys.M);
     private readonly ToolStripMenuItem browserLogin = Item("用浏览器登录 Google (&G)");
     private readonly ToolStripMenuItem terminalLogin = Item("用官方终端登录 (&T)");
     private readonly ToolStripMenuItem chooseProject = Item("添加本地项目 (&O)", Keys.Control | Keys.O);
     private readonly ToolStripMenuItem quickProject = Item("快速打开项目 (&Q)", Keys.Control | Keys.Shift | Keys.O);
+    private readonly ToolStripMenuItem openProjectMenu = Item("打开所选项目 (&P)");
+    private readonly ToolStripMenuItem projectExplorer = Item("在文件资源管理器打开 (&F)");
+    private readonly ToolStripMenuItem copyProjectPath = Item("复制项目路径 (&C)");
+    private readonly ToolStripMenuItem projectChanges = Item("查看 Git 项目改动 (&G)");
     private readonly ToolStripMenuItem removeProject = Item("从项目列表移除 (&D)");
     private readonly ToolStripMenuItem additionalDirectories = Item("附加工作目录 (&W)", Keys.Control | Keys.Shift | Keys.W);
-    private readonly ToolStripMenuItem commandPalette = Item("官方命令 (&P)", Keys.Control | Keys.Shift | Keys.P);
-    private readonly ToolStripMenuItem settingsMenu = Item("设置 (&S)");
+    private readonly ToolStripMenuItem commandPalette = Item("插入官方命令 (&P)", Keys.Control | Keys.Shift | Keys.P);
+    private readonly ToolStripMenuItem sendMessageMenu = Item("发送消息 (&S)");
+    private readonly ToolStripMenuItem settingsMenu = Item("常规设置 (&S)");
     private readonly ToolStripMenuItem updatesMenu = Item("检查更新 (&U)");
     private readonly ToolStripMenuItem extensionHub = Item("技能、MCP 与插件 (&E)", Keys.Control | Keys.F9);
     private readonly ToolStripMenuItem detect = Item("检测 CLI 版本 (&V)");
@@ -60,35 +66,52 @@ internal sealed partial class MainForm : Form
         AutoScaleMode = AutoScaleMode.Dpi;
         KeyPreview = true;
 
-        var menu = new MenuStrip { Dock = DockStyle.Top, TabIndex = 0 };
+        var menu = new MenuStrip { Dock = DockStyle.Top, TabIndex = 0, AccessibleName = "主菜单" };
         var projectMenu = Item("项目 (&P)");
-        projectMenu.DropDownItems.AddRange([chooseProject, quickProject, Item("打开所选项目 (&P)", action: OpenSelectedProjectAsync),
-            additionalDirectories, removeProject,
+        projectMenu.DropDownItems.AddRange([chooseProject, quickProject, openProjectMenu, new ToolStripSeparator(),
+            projectChanges, additionalDirectories, projectExplorer, copyProjectPath, removeProject,
             new ToolStripSeparator(), Item("退出 (&X)", action: () => { Close(); return Task.CompletedTask; })]);
         var sessionMenu = Item("会话 (&C)");
+        sessionMenu.DropDownItems.AddRange([newSession, restore, findHistory,
+            new ToolStripSeparator(), renameSession, archiveSession, archivedHistory, removeSession,
+            new ToolStripSeparator(), refresh, officialHistory, optionsMenu]);
+        var messageMenu = Item("消息 (&M)");
+        var attachments = Item("添加与管理附件 (&A)");
+        attachments.DropDownItems.AddRange([imageMenu, textAttachmentsMenu]);
+        messageMenu.DropDownItems.AddRange([
+            Item("转到消息列表 (&J)", action: () => { messages.Focus(); return Task.CompletedTask; }),
+            openMessage, speakMessage, copyMessage, findMessage, readReplyMenu, readConversation,
+            new ToolStripSeparator(), sendMessageMenu, steerMenu, attachments, commandPalette]);
+        var taskMenu = Item("任务 (&T)");
         var cancelMenu = Item("中止任务 (&X)", Keys.Control | Keys.Shift | Keys.X);
         cancelMenu.Click += async (_, _) => await RequestCancellationAsync();
         cancel.EnabledChanged += (_, _) => cancelMenu.Enabled = cancel.Enabled;
         cancelMenu.Enabled = false;
-        sessionMenu.DropDownItems.AddRange([newSession, restore, findHistory, renameSession, archiveSession, archivedHistory, removeSession,
-            refresh, optionsMenu, commandPalette, imageMenu, textAttachmentsMenu,
-            new ToolStripSeparator(), steerMenu, cancelMenu, disconnect]);
+        taskMenu.DropDownItems.AddRange([Item("任务活动 (&A)", action: ShowActivityAsync),
+            Item("任务计划 (&P)", Keys.Control | Keys.Shift | Keys.L, ShowPlanAsync),
+            logMenu, diffMenu, Item("完整状态 (&I)", Keys.Control | Keys.I, ShowStatusAsync),
+            new ToolStripSeparator(), cancelMenu, disconnect]);
         var accountMenu = Item("账户 (&A)");
         accountMenu.DropDownItems.AddRange([Item("账户与连接 (&S)", Keys.Control | Keys.Shift | Keys.S, ShowAccountAsync),
             new ToolStripSeparator(), browserLogin, terminalLogin, detect,
             Item("官方 CLI 安装指南 (&I)", action: () => { OpenLink(Cli.SetupGuide); return Task.CompletedTask; })]);
-        var viewMenu = Item("查看 (&V)");
-        viewMenu.DropDownItems.AddRange([readReplyMenu, Item("完整状态 (&I)", Keys.Control | Keys.I, ShowStatusAsync), logMenu,
-            diffMenu, Item("任务计划 (&P)", Keys.Control | Keys.Shift | Keys.L, ShowPlanAsync)]);
-        var toolsMenu = Item("工具 (&T)");
-        toolsMenu.DropDownItems.AddRange([extensionHub,
-            settingsMenu, updatesMenu, Item("官方插件列表 (&P)", action: ShowPluginsAsync)]);
+        var preferencesMenu = Item("设置 (&S)");
+        preferencesMenu.DropDownItems.AddRange([settingsMenu, extensionHub, updatesMenu]);
         var help = Item("帮助 (&H)");
         help.DropDownItems.Add(Item("键盘操作 (&K)", action: () =>
         {
             Dialogs.Text(this, "键盘操作", """
-                Tab / Shift+Tab：移动焦点。Alt：打开菜单。
-                F6 / Shift+F6：在项目、会话历史、消息、输入和状态间切换。
+                按 Alt 进入主菜单，左右选分类，下键打开，上下选功能，回车执行，Esc 返回。
+                “项目”管理目录，“会话”管理历史和模型，“消息”管阅读、发送和附件。
+                “任务”查看计划、日志和文件差异，也能中止任务。“账户”管登录和额度。
+                Tab / Shift+Tab 移动焦点。F6 / Shift+F6 在项目、会话历史、消息列表、输入和状态间切换。
+
+                消息列表用上下逐条选，左右跳到上一轮或下一轮提问。
+                回车读所选消息的全文，Esc 回到原位置。Ctrl+C 复制全文，Ctrl+F 查找当前会话的消息。
+                从“消息”菜单可以朗读所选消息或最新回复。全文窗口可跳转到代码段和链接。
+                从“任务”菜单打开任务活动。从“项目”菜单查看 Git 项目改动。
+
+                常用快捷键
                 Ctrl+O：输入项目目录，按回车打开。也可以选择“浏览文件夹”。
                 Ctrl+Shift+O：在已添加的项目中直接选、打开或移除。Ctrl+F 筛选。
                 Ctrl+Shift+W：管理当前项目的附加工作目录。
@@ -96,7 +119,7 @@ internal sealed partial class MainForm : Form
                 Ctrl+K：查找当前项目的会话。会话列表中按 F2 编辑本地名称。
                 会话列表中按 Shift+F10 打开操作菜单。Ctrl+Shift+A 归档所选会话，Ctrl+Shift+H 打开本地归档。
                 项目、会话或归档列表中按 Delete 打开移除确认。项目文件和官方会话均保留。
-                Ctrl+Enter：在输入框发送。Ctrl+Shift+X：中止任务。
+                默认 Ctrl+Enter 发送，Enter 换行。可在常规设置中交换。Ctrl+Shift+X 中止任务。
                 Ctrl+Shift+Enter：把输入框里的文字追加给正在运行的任务。
                 Ctrl+Shift+I：图片附件。在附件窗口按 Ctrl+O 添加，回车查看，Delete 从草稿移除。
                 Ctrl+Shift+J：文本与代码附件。Ctrl+O 添加，回车读原文，Delete 从草稿移除。
@@ -104,14 +127,14 @@ internal sealed partial class MainForm : Form
                 Ctrl+F9：从列表打开技能、MCP 服务或已安装插件。
                 Ctrl+Shift+R：朗读最新回复，在审批窗口朗读操作详情。
                 Ctrl+M：查看模型、权限模式和推理等级。Ctrl+Shift+D：断开 ACP。
-                Ctrl+Shift+S：账户与连接。Alt+R 重新核验，Alt+U 打开官方 CLI 并复制额度命令。粘贴后回车查询。
+                Ctrl+Shift+S：账户与连接。Alt+R 重新核验，Alt+U 刷新额度，Alt+T 在官方终端查询。
                 Ctrl+L：任务日志。Ctrl+Shift+L：任务计划。Ctrl+I：完整状态。
                 Ctrl+D：文件差异。Ctrl+Page Up / Down 切换文件，F7 / F8 切换差异段。
                 审批先聚焦操作详情。Tab 浏览按钮，回车或 Esc 拒绝。Alt+Y 允许本次。
                 """);
             return Task.CompletedTask;
         }));
-        menu.Items.AddRange([projectMenu, sessionMenu, accountMenu, viewMenu, toolsMenu, help]);
+        menu.Items.AddRange([projectMenu, sessionMenu, messageMenu, taskMenu, accountMenu, preferencesMenu, help]);
 
         var area = new TableLayoutPanel
         {
@@ -148,11 +171,11 @@ internal sealed partial class MainForm : Form
         right.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         right.RowStyles.Add(new RowStyle(SizeType.Percent, 22));
         right.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        chat.TabIndex = 0;
+        messages.TabIndex = 0;
         input.TabIndex = 1;
-        right.Controls.Add(Caption("会话消息"), 0, 0);
-        right.Controls.Add(chat, 0, 1);
-        right.Controls.Add(Caption("消息输入 · Ctrl+Enter 发送"), 0, 2);
+        right.Controls.Add(Caption("消息列表"), 0, 0);
+        right.Controls.Add(messages, 0, 1);
+        right.Controls.Add(inputCaption, 0, 2);
         right.Controls.Add(input, 0, 3);
         right.Controls.Add(Buttons(2, send, steer, cancel, showOptions, imageButton, textAttachmentsButton), 0, 4);
         area.Controls.Add(right, 1, 1);
@@ -209,7 +232,7 @@ internal sealed partial class MainForm : Form
     {
         if (keys is Keys.F6 or (Keys.F6 | Keys.Shift))
         {
-            Control[] targets = [projects, sessions, chat, input, showStatus];
+            Control[] targets = [projects, sessions, messages, input, showStatus];
             int current = Array.FindIndex(targets, control => control.ContainsFocus);
             int next = current < 0
                 ? (keys == Keys.F6 ? 0 : targets.Length - 1)
@@ -217,12 +240,17 @@ internal sealed partial class MainForm : Form
             targets[next].Focus();
             return true;
         }
-        if (keys == (Keys.Control | Keys.Enter) && input.Focused)
+        if (input.Focused && !input.IsComposing && keys == (settings.EnterToSend ? Keys.Enter : Keys.Control | Keys.Enter))
         {
             _ = SendAsync();
             return true;
         }
-        if (keys == (Keys.Control | Keys.Shift | Keys.Enter) && steerMenu.Enabled)
+        if (input.Focused && !input.IsComposing && settings.EnterToSend && keys == (Keys.Control | Keys.Enter))
+        {
+            input.SelectedText = Environment.NewLine;
+            return true;
+        }
+        if (keys == (Keys.Control | Keys.Shift | Keys.Enter) && steerMenu.Enabled && !input.IsComposing)
         {
             _ = SendSteeringAsync();
             return true;
@@ -241,6 +269,25 @@ internal sealed partial class MainForm : Form
         {
             _ = RestoreSelectedAsync();
             return true;
+        }
+        if (messages.Focused)
+        {
+            switch (keys)
+            {
+                case Keys.Enter:
+                    OpenSelectedMessage();
+                    return true;
+                case Keys.Control | Keys.C:
+                    CopySelectedMessage();
+                    return true;
+                case Keys.Control | Keys.F:
+                    FindMessage();
+                    return true;
+                case Keys.Left:
+                case Keys.Right:
+                    MoveToUserMessage(keys == Keys.Left ? -1 : 1);
+                    return true;
+            }
         }
         if (keys == Keys.F2 && sessions.Focused && renameSession.Enabled)
         {

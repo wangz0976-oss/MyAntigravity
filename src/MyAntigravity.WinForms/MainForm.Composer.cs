@@ -52,15 +52,19 @@ internal sealed partial class MainForm
     {
         bool available = !busy && !closing && draftOwner is not null && sessionId is not null &&
             agent is { Connected: true };
-        send.Enabled = available && (!string.IsNullOrWhiteSpace(draft.Text) || draft.HasAttachments) &&
+        send.Enabled = sendMessageMenu.Enabled = available && (!string.IsNullOrWhiteSpace(draft.Text) || draft.HasAttachments) &&
             (draft.Images.Count == 0 || agent?.CanSendImages == true) &&
             (draft.TextFiles.Count == 0 || agent?.CanSendTextFiles == true);
         steer.Enabled = steerMenu.Enabled = prompting && !steering && !interactionOpen && !cancelRequested && !closing &&
             sessionId is not null && draftOwner is not null && agent is { Connected: true, CanSteer: true } &&
             !string.IsNullOrWhiteSpace(draft.Text);
+        string sendingKeys = settings.EnterToSend ? "回车发送。Ctrl 加回车换行。" : "Ctrl 加回车发送。回车换行。";
         var inputHelp = prompting && agent is { CanSteer: true }
-            ? "任务进行中。输入补充文字后按 Ctrl 加 Shift 加回车追加。"
-            : "Ctrl 加回车发送。回车换行。Ctrl 加 Shift 加 P 查找官方命令。";
+            ? "任务进行中。输入补充文字后，从消息菜单选择追加指令。"
+            : $"{sendingKeys} 可从消息菜单发送或插入官方命令。";
+        string captionText = settings.EnterToSend ? "消息输入 · Enter 发送" : "消息输入 · Ctrl+Enter 发送";
+        if (inputCaption.Text != captionText)
+            inputCaption.Text = captionText;
         if (input.AccessibleDescription != inputHelp)
             input.AccessibleDescription = inputHelp;
         imageMenu.Enabled = imageButton.Enabled = available && (agent?.CanSendImages == true || draft.Images.Count > 0);
@@ -96,8 +100,7 @@ internal sealed partial class MainForm
             sending.Text = "";
             cleared = true;
             RefreshComposer();
-            AppendChat($"\n\n你（追加指令）：\n{AgentText.Visible(text)}\n");
-            replayRole = null;
+            AddMessage(MessageSpeaker.FollowUp, AgentText.Visible(text));
             SetStatus("追加指令已发送，等待当前任务处理。", speak: true);
             await request;
         }
@@ -110,7 +113,7 @@ internal sealed partial class MainForm
                 if (ReferenceEquals(agent, current) && sessionId == session)
                 {
                     if (cleared)
-                        AppendChat("\n（刚才的追加指令未获确认，已保留在草稿。）\n");
+                        AddMessage(MessageSpeaker.Notice, "刚才的追加指令未获确认，已保留在草稿。");
                     SetStatus("追加指令未获确认，文字已保留在草稿。请先处理当前审批或提问，再重试。", speak: true);
                 }
             }

@@ -15,6 +15,8 @@ public sealed class LocalSettings
 {
     public string? Executable { get; set; }
     public bool Announce { get; set; } = true;
+    public bool EnterToSend { get; set; }
+    public bool AutoReadReply { get; set; }
     public bool Sandbox { get; set; }
     public string UpdateChannel { get; set; } = "beta";
     public AccountVerification? LastAccountVerification { get; set; }

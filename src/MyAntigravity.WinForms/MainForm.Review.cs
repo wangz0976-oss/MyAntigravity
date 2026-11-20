@@ -2,6 +2,42 @@ namespace MyAntigravity;
 
 internal sealed partial class MainForm
 {
+    private Task ShowProjectChangesAsync() => RunAsync(async () =>
+    {
+        if (project is null)
+            return;
+        var review = await GitReview.OpenAsync(project);
+        if (review is null)
+        {
+            Dialogs.Text(this, "Git 项目改动", "当前项目不在 Git 工作区中。", showInTaskbar: true);
+            return;
+        }
+        var files = await review.ListAsync();
+        if (files.Count == 0)
+        {
+            Dialogs.Text(this, "Git 项目改动", "当前 Git 工作区没有可审查的改动。", showInTaskbar: true);
+            return;
+        }
+
+        GitChange? selected = null;
+        while (!closing)
+        {
+            (selected, _) = Dialogs.Browse(this, "Git 项目改动", "按文件路径或状态筛选",
+                "Git 修改文件列表", "审查所选改动 (&R)", files, entry => $"{entry.Path} {entry.ScopeLabel}", initial: selected);
+            if (selected is null)
+                return;
+            try
+            {
+                string patch = await review.ReadPatchAsync(selected);
+                Dialogs.ReviewGitPatch(this, selected, patch);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or TimeoutException)
+            {
+                Dialogs.Text(this, "无法读取 Git 文件差异", AgentText.Visible(error.Message), showInTaskbar: true);
+            }
+        }
+    });
+
     private Task ShowPlanAsync()
     {
         using var window = Dialogs.Window("当前会话任务计划", new Size(760, 475));
