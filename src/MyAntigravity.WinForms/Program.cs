@@ -1,9 +1,16 @@
 using System.Reflection;
+using System.Runtime.InteropServices;
 
 namespace MyAntigravity;
 
 internal static class Program
 {
+    private const uint FailCriticalErrors = 0x0001;
+    private const uint NoFaultDialog = 0x0002;
+
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    private static extern uint SetErrorMode(uint mode);
+
     internal static readonly string Version = typeof(Program).Assembly
         .GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion.Split('+')[0];
 
@@ -53,6 +60,8 @@ internal static class Program
     {
         if (!Path.IsPathFullyQualified(reportPath))
             return 2;
+        // Setup owns the visible error prompt, including failures to start a corrupt CLI binary.
+        SetErrorMode(FailCriticalErrors | NoFaultDialog);
         try
         {
             Cli.EnsureWindowsInstalledAsync(AppContext.BaseDirectory, CancellationToken.None).GetAwaiter().GetResult();
@@ -65,6 +74,8 @@ internal static class Program
             {
                 using var report = new FileStream(reportPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
                 using var writer = new StreamWriter(report);
+                if (error is System.ComponentModel.Win32Exception native)
+                    writer.WriteLine($"Windows 无法启动官方 CLI 或安装工具（错误代码 {native.NativeErrorCode}）。");
                 writer.WriteLine(AgentText.Visible(error.Message));
             }
             catch (Exception writeError) when (writeError is IOException or UnauthorizedAccessException or ArgumentException)

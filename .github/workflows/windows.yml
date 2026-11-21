@@ -83,7 +83,7 @@ jobs:
           $report = Join-Path $root 'cli-error.txt'
           $process = Start-Process $executable -ArgumentList ('--setup-cli "' + $report + '"') -WindowStyle Hidden -PassThru
           if (!$process.WaitForExit(30000) -or $process.ExitCode -ne 1 -or !(Test-Path -LiteralPath $report) -or
-              [string]::IsNullOrWhiteSpace((Get-Content -Raw -Encoding UTF8 -LiteralPath $report))) {
+              !(Get-Content -Raw -Encoding UTF8 -LiteralPath $report).Contains('Windows 无法启动')) {
             throw 'Packaged CLI setup mode did not return a readable failure report.'
           }
       - uses: actions/upload-artifact@v4
