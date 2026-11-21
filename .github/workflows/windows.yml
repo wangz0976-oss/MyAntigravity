@@ -50,27 +50,39 @@ jobs:
         run: ./packaging/Build-Release.ps1 -Iscc $env:ISCC_PATH
       - name: Smoke test the installer
         if: github.event_name == 'workflow_dispatch'
+        timeout-minutes: 3
         shell: pwsh
         run: |
           $root = Join-Path (Resolve-Path .work) 'installer smoke'
+          New-Item -ItemType Directory -Force $root | Out-Null
           $target = Join-Path $root 'installed application'
           $installer = (Resolve-Path dist/MyAntigravity-Setup.exe).Path
-          $arguments = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=desktopicon /DIR="' + $target + '"'
-          $process = Start-Process $installer -ArgumentList $arguments -WindowStyle Hidden -PassThru -Wait
-          if ($process.ExitCode) { throw "MyAntigravity setup exit code $($process.ExitCode)." }
+          $log = Join-Path $root 'setup.log'
+          $arguments = '/SP- /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOCLOSEAPPLICATIONS /TASKS=desktopicon' +
+            ' /DIR="' + $target + '" /LOG="' + $log + '"'
+          $process = Start-Process $installer -ArgumentList $arguments -WindowStyle Hidden -PassThru
+          if (!$process.WaitForExit(75000)) {
+            if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 30 }
+            throw 'MyAntigravity setup timed out.'
+          }
+          if ($process.ExitCode) {
+            if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 30 }
+            throw "MyAntigravity setup exit code $($process.ExitCode)."
+          }
           $executable = Join-Path $target 'MyAntigravity.exe'
           $shortcut = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'MyAntigravity.lnk'
           if (!(Test-Path -LiteralPath $executable) -or !(Test-Path -LiteralPath (Join-Path $target 'data') -PathType Container) -or
               !(Test-Path -LiteralPath $shortcut)) { throw 'Installed application, data directory, or desktop shortcut is missing.' }
           $shell = New-Object -ComObject WScript.Shell
           if ($shell.CreateShortcut($shortcut).TargetPath -ine $executable) { throw 'Desktop shortcut target is incorrect.' }
+          'Verified the installed application, data directory and desktop shortcut.'
 
           # A deliberately invalid CLI checks the packaged headless mode without downloading software.
           $fixture = New-Item -ItemType Directory -Force (Join-Path $root 'local/agy')
           Set-Content -LiteralPath (Join-Path $fixture.FullName 'agy.exe') -Value 'invalid test binary'
           $report = Join-Path $root 'cli-error.txt'
-          $process = Start-Process $executable -ArgumentList ('--setup-cli "' + $report + '"') -WindowStyle Hidden -PassThru -Wait
-          if ($process.ExitCode -ne 1 -or !(Test-Path -LiteralPath $report) -or
+          $process = Start-Process $executable -ArgumentList ('--setup-cli "' + $report + '"') -WindowStyle Hidden -PassThru
+          if (!$process.WaitForExit(30000) -or $process.ExitCode -ne 1 -or !(Test-Path -LiteralPath $report) -or
               [string]::IsNullOrWhiteSpace((Get-Content -Raw -Encoding UTF8 -LiteralPath $report))) {
             throw 'Packaged CLI setup mode did not return a readable failure report.'
           }
