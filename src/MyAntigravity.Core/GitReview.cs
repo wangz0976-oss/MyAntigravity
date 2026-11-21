@@ -42,7 +42,7 @@ public sealed partial class GitReview
         var root = result.Output.TrimEnd('\r', '\n');
         if (result.ExitCode != 0 || !Path.IsPathFullyQualified(root) || !Directory.Exists(root))
             throw new IOException("Git 无法读取该项目的工作区根目录。");
-        return new GitReview(git, root);
+        return new GitReview(git, Path.GetFullPath(root));
     }
 
     public async Task<IReadOnlyList<GitChange>> ListAsync()
@@ -176,7 +176,8 @@ public sealed partial class GitReview
     [GeneratedRegex(@"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")]
     private static partial Regex HunkHeader();
 
-    private async Task<(int ExitCode, string Output, string Error)> RunAsync(IEnumerable<string> arguments, int expectedExit = 0)
+    private async Task<(int ExitCode, string Output, string Error)> RunAsync(IEnumerable<string> arguments,
+        int expectedExit = 0, TimeSpan? limit = null)
     {
         var start = Cli.StartInfo(executable, root, true, "--literal-pathspecs", "-c", "core.fsmonitor=false");
         start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
@@ -188,7 +189,7 @@ public sealed partial class GitReview
             start.ArgumentList.Add(argument);
         using var process = Process.Start(start) ?? throw new IOException("无法启动 Git。");
         process.StandardInput.Close();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var timeout = new CancellationTokenSource(limit ?? TimeSpan.FromSeconds(15));
         var stdout = ReadAsync(process.StandardOutput, timeout.Token);
         var stderr = ReadAsync(process.StandardError, timeout.Token);
         try
@@ -197,10 +198,10 @@ public sealed partial class GitReview
             var error = await stderr.ConfigureAwait(false);
             await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
             if (process.ExitCode != 0 && process.ExitCode != expectedExit)
-                throw new IOException($"Git 无法读取项目改动（退出码 {process.ExitCode}）。\n{AgentText.Visible(error.Trim())}");
+                throw new IOException($"Git 操作失败（退出码 {process.ExitCode}）。\n{AgentText.Visible(error.Trim())}");
             return (process.ExitCode, output, error);
         }
-        catch (OperationCanceledException) { throw new TimeoutException("Git 读取项目改动超时。"); }
+        catch (OperationCanceledException) { throw new TimeoutException("Git 操作超时。"); }
         finally { Cli.Stop(process); }
     }
 

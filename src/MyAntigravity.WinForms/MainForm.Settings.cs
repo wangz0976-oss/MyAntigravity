@@ -8,7 +8,7 @@ internal sealed partial class MainForm
         window.ShowInTaskbar = true;
         var path = new TextBox { Text = settings.Executable ?? "", AccessibleName = "官方 CLI 完整路径", Dock = DockStyle.Top, TabIndex = 0 };
         var browse = new Button { Text = "选择 agy.exe (&B)", AutoSize = true, TabIndex = 1 };
-        var install = new Button { Text = "打开官方 CLI 安装指南 (&I)", AutoSize = true };
+        var install = new Button { Text = "安装官方 Windows CLI (&I)", AutoSize = true };
         var announce = new CheckBox
         {
             Text = "读屏状态播报 (&N)", AutoSize = true, Checked = settings.Announce, TabIndex = 2
@@ -44,7 +44,7 @@ internal sealed partial class MainForm
                 catch (FileNotFoundException error) { ShowCliGuide(error.Message, window); }
             }
         };
-        install.Click += (_, _) => OpenLink(Cli.SetupGuide);
+        install.Click += (_, _) => ShowCliGuide("可通过 Google 官方 PowerShell 命令安装 Windows CLI。", window);
 
         var startupUpdates = new CheckBox
         {

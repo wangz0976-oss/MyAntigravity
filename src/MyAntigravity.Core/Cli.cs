@@ -7,7 +7,8 @@ namespace MyAntigravity;
 public static class Cli
 {
     public static readonly Uri SetupGuide = new("https://antigravity.google/docs/getting-started?tab=cli");
-    public const string NotInstalled = "未找到 Google Antigravity CLI（agy.exe）。请打开官方 CLI 安装指南，安装后重新检测。";
+    public const string InstallCommand = "irm https://antigravity.google/cli/install.ps1 | iex";
+    public const string NotInstalled = "未找到 Google Antigravity CLI（agy.exe）。请安装 Windows CLI，再回到软件检测版本。";
 
     public static string? Find(string? configured)
     {
@@ -28,9 +29,12 @@ public static class Cli
     public static string ValidatePath(string configured)
     {
         string full = Environment.ExpandEnvironmentVariables(configured.Trim().Trim('"'));
-        if (string.Equals(Path.GetFileName(full), "Antigravity.exe", StringComparison.OrdinalIgnoreCase))
-            throw new FileNotFoundException("Antigravity.exe 是 Google 的桌面版。请安装官方 Antigravity CLI 并选择 agy.exe。");
-        if (!Path.IsPathFullyQualified(full) || !string.Equals(Path.GetFileName(full), "agy.exe", StringComparison.OrdinalIgnoreCase))
+        var fileName = Path.GetFileName(full);
+        if (fileName.StartsWith("Antigravity", StringComparison.OrdinalIgnoreCase) &&
+            (fileName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
+             fileName.EndsWith(".dmg", StringComparison.OrdinalIgnoreCase)))
+            throw new FileNotFoundException($"{AgentText.Visible(fileName)} 是 Google 的桌面版文件。请安装 Windows CLI 并选择 agy.exe。");
+        if (!Path.IsPathFullyQualified(full) || !string.Equals(fileName, "agy.exe", StringComparison.OrdinalIgnoreCase))
             throw new FileNotFoundException("请填写官方 Antigravity CLI 的完整路径，并选择 agy.exe。");
         var path = Path.GetFullPath(full);
         if (!File.Exists(path))

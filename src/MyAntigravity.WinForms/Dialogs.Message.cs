@@ -4,11 +4,12 @@ namespace MyAntigravity;
 
 internal static partial class Dialogs
 {
-    internal static void ReadMessage(Form owner, string title, string text, Func<string>? readLatest)
+    internal static void ReadMessage(Form owner, string title, string text, Func<string>? readLatest,
+        IReadOnlyList<FileChange>? reviewChanges = null)
     {
         using var form = Window(title, new Size(820, 535));
         form.ShowInTaskbar = true;
-        var body = MainForm.ReadableText("消息正文");
+        var body = MainForm.ReadableText(reviewChanges is null ? "消息正文" : "工具结果详情");
         body.WordWrap = false;
         body.ScrollBars = RichTextBoxScrollBars.Both;
         body.AccessibleDescription = "按 Alt 加 B 选择代码块，Alt 加 Y 复制代码，Alt 加 L 查看链接，Esc 返回原消息。";
@@ -20,6 +21,15 @@ internal static partial class Dialogs
         var copy = new Button { Text = "复制代码 (&Y)", AutoSize = true };
         var links = new Button { Text = "查看链接 (&L)", AutoSize = true };
         var close = new Button { Text = "关闭 (&C)", AutoSize = true, DialogResult = DialogResult.Cancel };
+        var buttons = new List<Button> { code, copy, links };
+        if (reviewChanges is { Count: > 0 })
+        {
+            var review = new Button { Text = "逐段审查差异 (&W)", AutoSize = true };
+            review.Click += (_, _) => ReviewChanges(form, reviewChanges);
+            buttons.Add(review);
+            body.AccessibleDescription += "Alt 加 W 打开文件差异审查。";
+        }
+        buttons.Add(close);
         var status = MainForm.Caption("");
         status.LiveSetting = AutomationLiveSetting.Polite;
 
@@ -96,7 +106,7 @@ internal static partial class Dialogs
         area.Controls.Add(body, 0, 0);
         area.Controls.Add(status, 0, 1);
         form.CancelButton = close;
-        Vertical(form, area, MainForm.Buttons(1, code, copy, links, close));
+        Vertical(form, area, MainForm.Buttons(1, buttons.ToArray()));
         form.ActiveControl = body;
         UpdateCommands();
         form.ShowDialog(owner);

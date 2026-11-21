@@ -9,7 +9,7 @@ AppName=MyAntigravity
 AppVersion={#ReleaseVersion}
 AppPublisher=wangz0976-oss
 AppPublisherURL=https://github.com/wangz0976-oss/MyAntigravity
-DefaultDirName={src}\installed
+DefaultDirName={localappdata}\MyAntigravity
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
@@ -39,6 +39,9 @@ zh_cn.RestoreFailed=旧版程序保留在 %1。请关闭 MyAntigravity 后重新
 
 [Files]
 Source: "{#PayloadFolder}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[Dirs]
+Name: "{app}\data"; Flags: uninsneveruninstall
 
 [Icons]
 Name: "{autoprograms}\MyAntigravity"; Filename: "{app}\MyAntigravity.exe"; WorkingDir: "{app}"; Tasks: startmenu

@@ -2,6 +2,33 @@ namespace MyAntigravity;
 
 internal sealed partial class MainForm
 {
+    private readonly TurnResults turnResults = new();
+
+    private Task ShowTurnResultsAsync()
+    {
+        string? activeSession = sessionId;
+        string? selectedId = null;
+        while (!closing && sessionId == activeSession)
+        {
+            var entries = turnResults.Snapshot();
+            if (entries.Count == 0)
+            {
+                Dialogs.Text(this, "本轮结果", "当前会话的本轮任务还没有收到工具结果。", showInTaskbar: true);
+                break;
+            }
+            var selected = Dialogs.Browse(this, "本轮结果", "按工具名称、状态或文件路径筛选", "本轮工具结果",
+                "查看结果详情 (&V)", entries, entry => $"{entry} {string.Join(" ", entry.Locations)} " +
+                    string.Join(" ", entry.Changes.Select(change => change.Path)), entry => entry.ToString(),
+                initial: entries.FirstOrDefault(entry => entry.Id == selectedId)).Item;
+            if (selected is null)
+                break;
+            selectedId = selected.Id;
+            Dialogs.ReadMessage(this, $"工具结果 - {AgentText.Visible(selected.Title)}", selected.Details(),
+                readLatest: null, reviewChanges: selected.Changes);
+        }
+        return Task.CompletedTask;
+    }
+
     private Task ShowProjectChangesAsync() => RunAsync(async () =>
     {
         if (project is null)

@@ -35,6 +35,43 @@ if (args is ["--live", var executable])
 }
 
 int testCount = 0;
+await Case("跨项目会话索引和 UTF-8 正文导出", async () =>
+{
+    var first = Path.Combine(scratch, "索引甲");
+    var second = Path.Combine(scratch, "索引乙");
+    var removed = Path.Combine(scratch, "已经移除");
+    var settings = new LocalSettings();
+    settings.RememberProject(first);
+    settings.RememberProject(second);
+    settings.RememberSession("same", first, DateTimeOffset.UnixEpoch);
+    settings.RememberSession("same", second, DateTimeOffset.UnixEpoch.AddDays(1));
+    settings.RememberSession("deleted", first, DateTimeOffset.UnixEpoch.AddDays(2));
+    settings.RememberSession("hidden", removed, DateTimeOffset.UnixEpoch.AddDays(3));
+    settings.RemoveSession("deleted", first);
+    settings.SetSessionPinned("same", first, true);
+    settings.SetSessionArchived("same", second, true);
+    var indexed = settings.IndexedSessions();
+    Check(indexed.Count == 2 && indexed[0].Directory == first && indexed[0].Pinned &&
+        indexed[1].Directory == second && indexed[1].Archived, "归档可查，同 ID 不跨项目合并，移除记录隐藏");
+
+    var transcript = new ConversationTranscript();
+    transcript.Add(MessageSpeaker.User, "我的问题");
+    var reply = transcript.AppendChunk(MessageSpeaker.Assistant, "代码 👋\n", "reply", out _);
+    transcript.AppendChunk(MessageSpeaker.Assistant, "第二行", "reply", out _);
+    var full = ConversationExport.Format(transcript.Messages);
+    var one = ConversationExport.Format([reply]);
+    transcript.AppendChunk(MessageSpeaker.Assistant, "生成中的后续", "reply", out _);
+    var area = Directory.CreateDirectory(Path.Combine(scratch, "导出文本")).FullName;
+    var target = Path.Combine(area, "对话.txt");
+    File.WriteAllText(target, "旧文本");
+    await ConversationExport.SaveAsync(target, full);
+    Check(full.ReplaceLineEndings("\n") == "你：\n我的问题\n\nAgent：\n代码 👋\n第二行" &&
+        one.ReplaceLineEndings("\n") == "Agent：\n代码 👋\n第二行" &&
+        File.ReadAllText(target) == full, "保存预览时已选内容的快照，保留完整正文");
+    Check(File.ReadAllBytes(target).AsSpan(0, 3).SequenceEqual(new byte[] { 0xef, 0xbb, 0xbf }) &&
+        Directory.EnumerateFiles(area).Single() == target, "生成 UTF-8 文本并清理临时文件");
+});
+
 await Case("更新日志转换为读屏纯文本", () =>
 {
     var notes = """
@@ -75,6 +112,19 @@ await Case("CLI 路径拒绝桌面版并恢复自动检测", () =>
     {
         Check(error.Message.Contains("桌面版") && error.Message.Contains("agy.exe"), "解释两种程序的区别");
     }
+    foreach (string name in new[] { "Antigravity-x64 (1).exe", "Antigravity (1).dmg" })
+    {
+        try
+        {
+            Cli.ValidatePath(Path.Combine(folder, name));
+            throw new InvalidOperationException("桌面版安装包被接受。");
+        }
+        catch (FileNotFoundException error)
+        {
+            Check(error.Message.Contains(name) && error.Message.Contains("Windows CLI"), "指出误选的桌面版安装包");
+        }
+    }
+    Check(Cli.InstallCommand == "irm https://antigravity.google/cli/install.ps1 | iex", "复制 Google 官方 PowerShell 命令");
     Check(Cli.ValidatePath($"\"{cli}\"") == cli && Cli.Find(cli) == cli, "带引号的官方路径可识别");
     string? automaticallyDetected = Cli.Find(null);
     if (automaticallyDetected is null)
@@ -161,6 +211,48 @@ await Case("Git 工作区只读查询及逐段差异", async () =>
     Check(untracked.Count == 1 && untracked[0].NewLine == 1 && untracked[0].Added.SequenceEqual(["未跟踪内容"]) &&
         (await review.ListAsync()).SequenceEqual(entries), "未跟踪文件可审查，状态未被更改");
 
+    var original = (await review.ListWorktreesAsync()).Single();
+    var checkout = Path.Combine(scratch, "Git 工作树 " + Guid.NewGuid().ToString("N"));
+    await ThrowsAsync<IOException>(() => review.CreateWorktreeAsync(repo, "work/existing-path"));
+    await ThrowsAsync<IOException>(() => review.CreateWorktreeAsync(Path.Combine(repo, "子目录"), "work/nested"));
+    await ThrowsAsync<ArgumentException>(() => review.CreateWorktreeAsync(checkout, "--force"));
+    var created = await review.CreateWorktreeAsync(checkout, "work/fixture");
+    var trees = await review.ListWorktreesAsync();
+    Check(LocalSettings.PathEquals(checkout, created) && trees.Count == 2 && trees[0] == original &&
+        trees[1].Branch == "work/fixture" && trees[1].Commit == original.Commit &&
+        LocalSettings.PathEquals(trees[1].Path, checkout), "真实 Git 创建并列出新工作树");
+    Check(File.ReadAllText(Path.Combine(checkout, Path.GetFileName(path))).ReplaceLineEndings("\n") == "第一行\n中间行\n最后一行\n" &&
+        (await review.ListAsync()).SequenceEqual(entries), "新工作树从 HEAD 创建，原暂存和未暂存修改保留");
+
+    Check(!(await review.InspectWorktreeAsync(repo, [])).CanRemove &&
+        !(await review.InspectWorktreeAsync(checkout, [Path.Combine(checkout, "附加目录")])).CanRemove,
+        "保护主工作树和当前项目附加目录");
+    await Git("worktree", "lock", checkout);
+    Check((await review.InspectWorktreeAsync(checkout, [])).BlockedReason?.Contains("锁定") == true,
+        "Git 锁定工作树不能移除");
+    await Git("worktree", "unlock", checkout);
+    var approved = await review.InspectWorktreeAsync(checkout, []);
+    Check(approved.CanRemove, $"可检查干净的附属工作树：{approved.BlockedReason ?? string.Join(", ", approved.Changes)}");
+    var changedAfterConfirm = Path.Combine(checkout, "确认后才写入.txt");
+    File.WriteAllText(changedAfterConfirm, "保留");
+    Check((await review.InspectWorktreeAsync(checkout, [])).Changes is [{ Scope: GitChangeScope.Untracked }],
+        "读取新增的未跟踪文件");
+    await ThrowsAsync<IOException>(() => review.RemoveWorktreeAsync(approved, []));
+    Check(File.Exists(changedAfterConfirm), "状态变更后拒绝上一次确认");
+    File.Delete(changedAfterConfirm);
+    var ignoreRules = Path.Combine(repo, ".git", "info", "exclude");
+    File.AppendAllText(ignoreRules, "\nignored-cleanup-fixture.tmp\n");
+    var ignoredFile = Path.Combine(checkout, "ignored-cleanup-fixture.tmp");
+    File.WriteAllText(ignoredFile, "保留忽略文件");
+    Check((await review.InspectWorktreeAsync(checkout, [])).IgnoredPaths is ["ignored-cleanup-fixture.tmp"],
+        "被 Git 忽略的文件也阻止删除");
+    await ThrowsAsync<IOException>(() => review.RemoveWorktreeAsync(approved, []));
+    File.Delete(ignoredFile);
+    await review.RemoveWorktreeAsync(approved, []);
+    await Git("rev-parse", "--verify", "refs/heads/work/fixture");
+    Check(!Directory.Exists(checkout) && (await review.ListWorktreesAsync()).Count == 1 &&
+        (await review.ListAsync()).SequenceEqual(entries), "仅移除干净的附属目录，分支和原仓库改动保留");
+
     async Task Git(params string[] arguments)
     {
         using var process = Process.Start(Cli.StartInfo(OperatingSystem.IsWindows() ? "git.exe" : "git", repo, true,
@@ -169,6 +261,82 @@ await Case("Git 工作区只读查询及逐段差异", async () =>
         await process.WaitForExitAsync();
         Check(process.ExitCode == 0, await error);
     }
+});
+
+await Case("本轮工具结果合并 ACP 更新及差异", () =>
+{
+    var results = new TurnResults();
+    Apply("""
+        {"toolCallId":"first","kind":"execute","title":"运行测试","status":"in_progress",
+         "locations":[{"path":"src/a.cs","line":3}],
+         "content":[{"type":"content","content":{"type":"text","text":"测试开始"}}]}
+        """);
+    Apply("""
+        {"toolCallId":"second","kind":"edit","title":"更新说明","status":"completed",
+         "content":[{"type":"diff","path":"README.md","oldText":"before","newText":"after"},
+          {"type":"content","content":{"type":"resource_link","name":"报告","uri":"https://example.com/report"}}]}
+        """);
+    var old = results.Snapshot();
+    Apply("""{"toolCallId":"first","status":"completed","rawOutput":"测试成功"}""");
+    Apply("""{"toolCallId":"first","rawOutput":null}""");
+    var rows = results.Snapshot();
+    Check(rows is [{ Id: "first", Title: "运行测试", Status: "completed" }, { Id: "second" }] &&
+        rows[0].Details().Contains("测试开始") && rows[0].Details().Contains("测试成功") &&
+        rows[0].Details().Contains("第 3 行") && old[0].Status == "in_progress", "补丁不清空未更新字段，浏览快照固定");
+    Check(rows[1].Changes is [{ Path: "README.md" }] && rows[1].Details().Contains("https://example.com/report"),
+        "同一项展示资源链接和结构化差异");
+    Apply("""{"toolCallId":"second","content":[]}""");
+    Check(results.Snapshot()[1].Changes.Count == 0, "显式的新内容取代旧内容");
+    results.Clear();
+    Check(results.Snapshot().Count == 0, "新轮次清除旧结果");
+    return Task.CompletedTask;
+
+    void Apply(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        results.Apply(document.RootElement);
+    }
+});
+
+await Case("会话置顶及规则来源范围", () =>
+{
+    var folder = Directory.CreateDirectory(Path.Combine(scratch, "规则和置顶")).FullName;
+    var repo = Directory.CreateDirectory(Path.Combine(folder, "repo")).FullName;
+    var sub = Directory.CreateDirectory(Path.Combine(repo, "sub")).FullName;
+    var nestedRules = Directory.CreateDirectory(Path.Combine(repo, ".agents", "rules", "nested")).FullName;
+    var legacy = Directory.CreateDirectory(Path.Combine(sub, ".agent", "rules")).FullName;
+    var profile = Directory.CreateDirectory(Path.Combine(folder, "profile")).FullName;
+    var global = Directory.CreateDirectory(Path.Combine(profile, ".gemini", "config", "rules")).FullName;
+    File.WriteAllText(Path.Combine(repo, ".git"), "gitdir: worktree");
+    File.WriteAllText(Path.Combine(repo, "AGENTS.md"), "仓库级");
+    File.WriteAllText(Path.Combine(repo, ".agents", "rules", "project.md"), "分项规则");
+    File.WriteAllText(Path.Combine(nestedRules, "not-scanned.md"), "子规则");
+    File.WriteAllText(Path.Combine(legacy, "legacy.md"), "旧规则");
+    File.WriteAllText(Path.Combine(global, "global.md"), "全局");
+    File.WriteAllText(Path.Combine(folder, "GEMINI.md"), "仓库边界之外");
+    var rules = AntigravityRules.List([sub, repo], profile);
+    Check(rules.Select(item => item.Name).ToHashSet().SetEquals(["AGENTS.md", "project.md", "legacy.md", "global.md"]) &&
+        rules.Count == 4 && SkillCatalog.Preview(rules.Single(item => item.Name == "project.md").Path) == "分项规则",
+        "扫描工作树 Git 边界、旧规则目录和全局，附加目录重叠时去重");
+
+    var store = new SettingsFile(folder);
+    var settings = new LocalSettings();
+    settings.RememberSession("pin", repo, DateTimeOffset.UnixEpoch);
+    settings.RememberSession("recent", repo, DateTimeOffset.UnixEpoch.AddDays(1));
+    settings.RememberSession("pin", sub, DateTimeOffset.UnixEpoch);
+    Check(settings.SetSessionPinned("pin", repo, true), "置顶本机记录");
+    store.Save(settings);
+    var loaded = store.Load();
+    loaded.RememberSession("pin", repo, DateTimeOffset.UnixEpoch);
+    var titles = new Dictionary<string, string?>();
+    Check(loaded.ProjectSessions(repo, [], titles) is [{ Id: "pin", Pinned: true }, { Id: "recent" }] &&
+        loaded.FindSession("pin", sub) is { Pinned: false }, "重启后仍优先显示，同 ID 的其他项目独立");
+    loaded.SetSessionArchived("pin", repo, true);
+    Check(loaded.ProjectSessions(repo, [], titles) is [{ Id: "recent" }], "归档不显示在当前列表");
+    loaded.SetSessionArchived("pin", repo, false);
+    Check(loaded.FindSession("pin", repo) is { Pinned: true } && loaded.SetSessionPinned("pin", repo, false) &&
+        loaded.ProjectSessions(repo, [], titles) is [{ Id: "recent" }, { Id: "pin" }], "恢复归档保留置顶，取消后按时间");
+    return Task.CompletedTask;
 });
 
 await Case("消息列表归并流式片段并保留原文", () =>

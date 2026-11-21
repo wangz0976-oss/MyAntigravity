@@ -2,10 +2,13 @@ using System.Text.Json;
 
 namespace MyAntigravity;
 
-public sealed record LocalSession(string Id, string Directory, string? Title, DateTimeOffset Updated, bool Archived = false)
+public sealed record LocalSession(string Id, string Directory, string? Title, DateTimeOffset Updated,
+    bool Archived = false, bool Pinned = false)
 {
     public override string ToString() =>
-        string.IsNullOrWhiteSpace(Title) ? $"会话 · {Updated.ToLocalTime():g} · {Id}" : $"{AgentText.Visible(Title)} · {Updated.ToLocalTime():g}";
+        (Pinned ? "已置顶 · " : "") + (string.IsNullOrWhiteSpace(Title)
+            ? $"会话 · {Updated.ToLocalTime():g} · {Id}"
+            : $"{AgentText.Visible(Title)} · {Updated.ToLocalTime():g}");
 }
 
 public sealed record RemovedSession(string Id, string Directory);
@@ -74,7 +77,8 @@ public sealed class LocalSettings
             return;
         var saved = FindSession(id, directory);
         Sessions.RemoveAll(session => session.Id == id && PathEquals(session.Directory, directory));
-        Sessions.Add(new LocalSession(id, directory, saved?.Title, updated ?? DateTimeOffset.UtcNow, saved?.Archived ?? false));
+        Sessions.Add(new LocalSession(id, directory, saved?.Title, updated ?? DateTimeOffset.UtcNow,
+            saved?.Archived ?? false, saved?.Pinned ?? false));
     }
 
     public LocalSession? FindSession(string id, string directory) =>
@@ -129,6 +133,15 @@ public sealed class LocalSettings
         return true;
     }
 
+    public bool SetSessionPinned(string id, string directory, bool pinned)
+    {
+        int index = Sessions.FindIndex(session => session.Id == id && PathEquals(session.Directory, directory));
+        if (index < 0 || Sessions[index].Archived || Sessions[index].Pinned == pinned)
+            return false;
+        Sessions[index] = Sessions[index] with { Pinned = pinned };
+        return true;
+    }
+
     public IReadOnlyList<LocalSession> ProjectSessions(string directory, IReadOnlyList<LocalSession> official,
         IReadOnlyDictionary<string, string?> activeTitles, bool archived = false)
     {
@@ -151,9 +164,17 @@ public sealed class LocalSettings
             };
         }
         return visible.Values.Where(record => record.Archived == archived && !removed.Contains(record.Id))
-            .OrderByDescending(record => record.Updated)
+            .OrderByDescending(record => !archived && record.Pinned).ThenByDescending(record => record.Updated)
             .ThenBy(record => record.Id, StringComparer.Ordinal).ToArray();
     }
+
+    public IReadOnlyList<LocalSession> IndexedSessions() => Sessions
+        .Where(record => Projects.Any(project => PathEquals(project, record.Directory)) &&
+            !IsSessionRemoved(record.Id, record.Directory))
+        .OrderByDescending(record => !record.Archived && record.Pinned)
+        .ThenByDescending(record => record.Updated)
+        .ThenBy(record => record.Directory, StringComparer.OrdinalIgnoreCase)
+        .ThenBy(record => record.Id, StringComparer.Ordinal).ToArray();
 
     public static string ProjectPath(string path)
     {

@@ -16,6 +16,9 @@ internal sealed partial class MainForm
     private readonly ToolStripMenuItem copyMessage = Item("复制所选消息 (&C)");
     private readonly ToolStripMenuItem findMessage = Item("查找消息 (&F)");
     private readonly ToolStripMenuItem readConversation = Item("阅读完整会话 (&L)");
+    private readonly ToolStripMenuItem exportText = Item("导出文本 (&X)");
+    private readonly ToolStripMenuItem exportConversation = Item("当前会话 (&A)");
+    private readonly ToolStripMenuItem exportMessage = Item("所选消息 (&M)");
 
     private ConversationMessage? SelectedMessage => messages.SelectedIndex >= 0
         ? transcript.Messages[messages.SelectedIndex] : null;
@@ -27,7 +30,10 @@ internal sealed partial class MainForm
         copyMessage.Click += (_, _) => CopySelectedMessage();
         findMessage.Click += (_, _) => FindMessage();
         readConversation.Click += (_, _) => Dialogs.Text(this, "完整会话",
-            string.Join("\n\n", transcript.Messages.Select(message => $"{message.Label}：\n{message.Text}")));
+            ConversationExport.Format(transcript.Messages));
+        exportText.DropDownItems.AddRange([exportConversation, exportMessage]);
+        exportConversation.Click += async (_, _) => await ExportMessagesAsync(selectedOnly: false);
+        exportMessage.Click += async (_, _) => await ExportMessagesAsync(selectedOnly: true);
         messages.SelectedIndexChanged += (_, _) =>
         {
             UpdateMessageCommands();
@@ -41,11 +47,13 @@ internal sealed partial class MainForm
         var speak = Item("朗读所选消息 (&S)", action: () => { SpeakSelectedMessage(); return Task.CompletedTask; });
         var copy = Item("复制所选消息 (&C)", action: () => { CopySelectedMessage(); return Task.CompletedTask; });
         var find = Item("查找消息 (&F)", action: () => { FindMessage(); return Task.CompletedTask; });
-        menu.Items.AddRange([open, speak, copy, find]);
+        var export = Item("导出所选消息 (&X)", action: () => ExportMessagesAsync(selectedOnly: true));
+        menu.Items.AddRange([open, speak, copy, find, export]);
         menu.Opening += (_, _) =>
         {
             open.Enabled = speak.Enabled = copy.Enabled = SelectedMessage is not null;
             find.Enabled = messages.Items.Count > 0;
+            export.Enabled = exportMessage.Enabled;
         };
         AssignListMenu(messages, menu);
         UpdateMessageCommands();
@@ -55,6 +63,48 @@ internal sealed partial class MainForm
     {
         openMessage.Enabled = speakMessage.Enabled = copyMessage.Enabled = SelectedMessage is not null;
         findMessage.Enabled = readConversation.Enabled = messages.Items.Count > 0;
+        exportText.Enabled = exportConversation.Enabled = messages.Items.Count > 0;
+        exportMessage.Enabled = SelectedMessage is not null;
+    }
+
+    private async Task ExportMessagesAsync(bool selectedOnly)
+    {
+        var selected = SelectedMessage;
+        var entries = selectedOnly ? selected is null ? [] : new[] { selected } : transcript.Messages;
+        if (entries.Count == 0)
+            return;
+        string snapshot = ConversationExport.Format(entries);
+        using var preview = Dialogs.Window(selectedOnly ? "预览所选消息的导出文本" : "预览当前会话的导出文本",
+            new Size(760, 510));
+        var content = ReadableText("将保存的文本内容");
+        content.Text = snapshot;
+        content.Select(0, 0);
+        var save = new Button { Text = "保存文本 (&S)", AutoSize = true, DialogResult = DialogResult.OK };
+        var back = new Button { Text = "取消 (&C)", AutoSize = true, DialogResult = DialogResult.Cancel };
+        preview.CancelButton = back;
+        Dialogs.Vertical(preview, content, Buttons(1, save, back));
+        preview.ActiveControl = content;
+        if (preview.ShowDialog(this) != DialogResult.OK)
+            return;
+        using var picker = new SaveFileDialog
+        {
+            Title = "保存对话文本", Filter = "UTF-8 文本|*.txt", DefaultExt = "txt",
+            AddExtension = true, OverwritePrompt = true,
+            FileName = selectedOnly ? $"消息-{selected!.Index + 1}.txt" : "MyAntigravity-会话.txt"
+        };
+        if (picker.ShowDialog(this) != DialogResult.OK)
+            return;
+        try
+        {
+            await ConversationExport.SaveAsync(picker.FileName, snapshot);
+            if (!closing)
+                SetStatus($"已保存文本：{AgentText.Visible(Path.GetFileName(picker.FileName))}", record: false, speak: true);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            if (!closing)
+                Dialogs.Text(this, "导出文本失败", AgentText.Visible(error.Message));
+        }
     }
 
     private void AddMessage(MessageSpeaker speaker, string text)

@@ -16,7 +16,9 @@ internal sealed partial class MainForm : Form
     private readonly ToolStripMenuItem newSession = Item("新建会话 (&N)", Keys.Control | Keys.N);
     private readonly ToolStripMenuItem restore = Item("恢复所选会话 (&H)", Keys.Control | Keys.H);
     private readonly ToolStripMenuItem findHistory = Item("查找会话 (&K)", Keys.Control | Keys.K);
+    private readonly ToolStripMenuItem findAllHistory = Item("跨项目查找会话 (&G)");
     private readonly ToolStripMenuItem renameSession = Item("重命名本地会话 (&E)");
+    private readonly ToolStripMenuItem pinSession = Item("置顶本地会话 (&T)");
     private readonly ToolStripMenuItem archiveSession = Item("移入本地归档 (&A)", Keys.Control | Keys.Shift | Keys.A);
     private readonly ToolStripMenuItem archivedHistory = Item("打开本地归档 (&B)", Keys.Control | Keys.Shift | Keys.H);
     private readonly ToolStripMenuItem removeSession = Item("从本机历史删除会话 (&D)");
@@ -34,13 +36,14 @@ internal sealed partial class MainForm : Form
     private readonly ToolStripMenuItem projectExplorer = Item("在文件资源管理器打开 (&F)");
     private readonly ToolStripMenuItem copyProjectPath = Item("复制项目路径 (&C)");
     private readonly ToolStripMenuItem projectChanges = Item("查看 Git 项目改动 (&G)");
+    private readonly ToolStripMenuItem projectWorktrees = Item("Git 工作树 (&T)");
     private readonly ToolStripMenuItem removeProject = Item("从项目列表移除 (&D)");
     private readonly ToolStripMenuItem additionalDirectories = Item("附加工作目录 (&W)", Keys.Control | Keys.Shift | Keys.W);
     private readonly ToolStripMenuItem commandPalette = Item("插入官方命令 (&P)", Keys.Control | Keys.Shift | Keys.P);
     private readonly ToolStripMenuItem sendMessageMenu = Item("发送消息 (&S)");
     private readonly ToolStripMenuItem settingsMenu = Item("常规设置 (&S)");
     private readonly ToolStripMenuItem updatesMenu = Item("检查更新 (&U)");
-    private readonly ToolStripMenuItem extensionHub = Item("技能、MCP 与插件 (&E)", Keys.Control | Keys.F9);
+    private readonly ToolStripMenuItem extensionHub = Item("规则、技能、MCP 与插件 (&E)", Keys.Control | Keys.F9);
     private readonly ToolStripMenuItem detect = Item("检测 CLI 版本 (&V)");
     private readonly ToolStripMenuItem logMenu = Item("任务日志 (&L)", Keys.Control | Keys.L);
     private readonly ToolStripMenuItem readReplyMenu = Item("朗读最新回复 (&E)", Keys.Control | Keys.Shift | Keys.R);
@@ -68,19 +71,22 @@ internal sealed partial class MainForm : Form
 
         var menu = new MenuStrip { Dock = DockStyle.Top, TabIndex = 0, AccessibleName = "主菜单" };
         var projectMenu = Item("项目 (&P)");
+        projectWorktrees.DropDownItems.AddRange([
+            Item("查看和打开工作树 (&O)", action: BrowseWorktreesAsync),
+            Item("新建工作树 (&N)", action: CreateWorktreeAsync)]);
         projectMenu.DropDownItems.AddRange([chooseProject, quickProject, openProjectMenu, new ToolStripSeparator(),
-            projectChanges, additionalDirectories, projectExplorer, copyProjectPath, removeProject,
+            projectChanges, projectWorktrees, additionalDirectories, projectExplorer, copyProjectPath, removeProject,
             new ToolStripSeparator(), Item("退出 (&X)", action: () => { Close(); return Task.CompletedTask; })]);
         var sessionMenu = Item("会话 (&C)");
-        sessionMenu.DropDownItems.AddRange([newSession, restore, findHistory,
-            new ToolStripSeparator(), renameSession, archiveSession, archivedHistory, removeSession,
+        sessionMenu.DropDownItems.AddRange([newSession, restore, findHistory, findAllHistory,
+            new ToolStripSeparator(), renameSession, pinSession, archiveSession, archivedHistory, removeSession,
             new ToolStripSeparator(), refresh, officialHistory, optionsMenu]);
         var messageMenu = Item("消息 (&M)");
         var attachments = Item("添加与管理附件 (&A)");
         attachments.DropDownItems.AddRange([imageMenu, textAttachmentsMenu]);
         messageMenu.DropDownItems.AddRange([
             Item("转到消息列表 (&J)", action: () => { messages.Focus(); return Task.CompletedTask; }),
-            openMessage, speakMessage, copyMessage, findMessage, readReplyMenu, readConversation,
+            openMessage, speakMessage, copyMessage, findMessage, readReplyMenu, readConversation, exportText,
             new ToolStripSeparator(), sendMessageMenu, steerMenu, attachments, commandPalette]);
         var taskMenu = Item("任务 (&T)");
         var cancelMenu = Item("中止任务 (&X)", Keys.Control | Keys.Shift | Keys.X);
@@ -88,13 +94,18 @@ internal sealed partial class MainForm : Form
         cancel.EnabledChanged += (_, _) => cancelMenu.Enabled = cancel.Enabled;
         cancelMenu.Enabled = false;
         taskMenu.DropDownItems.AddRange([Item("任务活动 (&A)", action: ShowActivityAsync),
+            Item("本轮结果 (&R)", action: ShowTurnResultsAsync),
             Item("任务计划 (&P)", Keys.Control | Keys.Shift | Keys.L, ShowPlanAsync),
             logMenu, diffMenu, Item("完整状态 (&I)", Keys.Control | Keys.I, ShowStatusAsync),
             new ToolStripSeparator(), cancelMenu, disconnect]);
         var accountMenu = Item("账户 (&A)");
         accountMenu.DropDownItems.AddRange([Item("账户与连接 (&S)", Keys.Control | Keys.Shift | Keys.S, ShowAccountAsync),
             new ToolStripSeparator(), browserLogin, terminalLogin, detect,
-            Item("官方 CLI 安装指南 (&I)", action: () => { OpenLink(Cli.SetupGuide); return Task.CompletedTask; })]);
+            Item("官方 CLI 安装指南 (&I)", action: () =>
+            {
+                ShowCliGuide("可通过 Google 官方 PowerShell 命令安装 Windows CLI。");
+                return Task.CompletedTask;
+            })]);
         var preferencesMenu = Item("设置 (&S)");
         preferencesMenu.DropDownItems.AddRange([settingsMenu, extensionHub, updatesMenu]);
         var help = Item("帮助 (&H)");
@@ -109,7 +120,9 @@ internal sealed partial class MainForm : Form
                 消息列表用上下逐条选，左右跳到上一轮或下一轮提问。
                 回车读所选消息的全文，Esc 回到原位置。Ctrl+C 复制全文，Ctrl+F 查找当前会话的消息。
                 从“消息”菜单可以朗读所选消息或最新回复。全文窗口可跳转到代码段和链接。
-                从“任务”菜单打开任务活动。从“项目”菜单查看 Git 项目改动。
+                从“任务”菜单查看本轮结果和活动。从“项目”菜单查看 Git 项目改动、打开或新建工作树。
+                “会话”菜单可以置顶本地会话。“设置”里的扩展入口可以查阅 Antigravity 规则。
+                “会话”菜单能跨项目查找历史。“消息”菜单可将整段对话或所选消息预览后保存为文本。
 
                 常用快捷键
                 Ctrl+O：输入项目目录，按回车打开。也可以选择“浏览文件夹”。

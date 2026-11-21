@@ -219,7 +219,8 @@ internal sealed partial class MainForm
             }
         };
         quotaHelp.Click += (_, _) => OpenLink(new Uri("https://antigravity.google/docs/cli/commands/usage"));
-        install.Click += (_, _) => OpenLink(Cli.SetupGuide);
+        install.Click += (_, _) => ShowCliGuide(executable is null ? checkStatus ?? Cli.NotInstalled :
+            "可通过 Google 官方 PowerShell 命令安装 Windows CLI。", window);
         copyDiagnostic.Click += (_, _) =>
         {
             string loginStatus = executable is not null && settings.LastAccountVerification is { } verification &&

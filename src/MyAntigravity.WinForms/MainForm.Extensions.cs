@@ -11,11 +11,12 @@ internal sealed partial class MainForm
     {
         ExtensionEntry[] entries =
         [
+            new("规则", "浏览工作目录、附加目录与全局位置的规则文件，回车阅读正文。", ShowRulesAsync),
             new("技能", "浏览工作目录、本机和插件里的技能，查看说明并从当前会话使用可用命令。", ShowSkillsAsync),
             new("MCP 服务", "查看全局与工作目录配置，启用或停用官方 CLI 的全局服务。", ShowMcpAsync),
             new("已安装插件", "查看官方 CLI 返回的插件名称、版本和启用状态。", ShowPluginsAsync)
         ];
-        var selected = Dialogs.Search(this, "技能、MCP 与插件", "按名称筛选", "扩展管理入口",
+        var selected = Dialogs.Search(this, "规则、技能、MCP 与插件", "按名称筛选", "扩展管理入口",
             "打开所选工具 (&O)", entries, entry => entry.Label, entry => entry.Description);
         if (selected is not null)
             await selected.Open();
@@ -23,6 +24,39 @@ internal sealed partial class MainForm
 
     private string[] ExtensionWorkspaces() => project is { } active
         ? [active, .. settings.DirectoriesForProject(active)] : [];
+
+    private async Task ShowRulesAsync()
+    {
+        string[] workspaces = ExtensionWorkspaces();
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var rules = await Task.Run(() => AntigravityRules.List(workspaces, profile));
+        if (closing)
+            return;
+        if (rules.Count == 0)
+        {
+            Dialogs.Text(this, "Antigravity 规则", "在工作目录、附加目录和全局的标准位置没有发现可读的规则文件。",
+                showInTaskbar: true);
+            return;
+        }
+        AntigravityRule? selected = null;
+        while (!closing)
+        {
+            (selected, _) = Dialogs.Browse(this, "Antigravity 规则", "按名称、来源或路径筛选", "发现的规则文件",
+                "阅读所选规则 (&V)", rules, entry => $"{entry.Name} {entry.Source} {entry.Path}",
+                entry => $"来源：{AgentText.Visible(entry.Source)}\n路径：{AgentText.Visible(entry.Path)}", initial: selected);
+            if (selected is not { } rule)
+                return;
+            string text;
+            try { text = await Task.Run(() => SkillCatalog.Preview(rule.Path)); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                text = $"无法读取规则文件。\n{AgentText.Visible(error.Message)}";
+            }
+            if (!closing)
+                Dialogs.Text(this, $"规则 - {AgentText.Visible(rule.Name)}",
+                    $"来源：{AgentText.Visible(rule.Source)}\n路径：{AgentText.Visible(rule.Path)}\n\n{text}", showInTaskbar: true);
+        }
+    }
 
     private async Task ShowSkillsAsync()
     {

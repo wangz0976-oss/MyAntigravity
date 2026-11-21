@@ -80,7 +80,9 @@ internal sealed partial class MainForm : Form
         newSession.Click += async (_, _) => await StartSessionAsync(null);
         restore.Click += async (_, _) => await RestoreSelectedAsync();
         findHistory.Click += async (_, _) => await FindSessionAsync();
+        findAllHistory.Click += async (_, _) => await FindAllSessionsAsync();
         renameSession.Click += async (_, _) => await RenameSessionAsync();
+        pinSession.Click += async (_, _) => await ToggleSessionPinAsync();
         commandPalette.Click += async (_, _) => await InsertOfficialCommandAsync();
         imageMenu.Click += async (_, _) => await ManageImagesAsync();
         imageButton.Click += async (_, _) => await ManageImagesAsync();
@@ -185,15 +187,19 @@ internal sealed partial class MainForm : Form
             browserLogin.Enabled = terminalLogin.Enabled = detect.Enabled = idle;
         openProject.Enabled = openProjectMenu.Enabled = projectExplorer.Enabled = copyProjectPath.Enabled =
             removeProject.Enabled = idle && projects.SelectedItem is string;
-        additionalDirectories.Enabled = projectChanges.Enabled = idle && project is not null;
+        additionalDirectories.Enabled = projectWorktrees.Enabled = projectChanges.Enabled = idle && project is not null;
         quickProject.Enabled = idle && settings.Projects.Count > 0;
         newSession.Enabled = refresh.Enabled = officialHistory.Enabled = idle && project is not null;
         restore.Enabled = openSession.Enabled = idle && project is not null && sessions.SelectedItem is LocalSession;
         removeSession.Enabled = restore.Enabled;
         findHistory.Enabled = idle && sessions.Items.Count > 0;
+        findAllHistory.Enabled = idle && settings.Projects.Count > 0;
         renameSession.Enabled = idle && project is not null && sessions.SelectedItem is LocalSession selected &&
             settings.FindSession(selected.Id, project) is not null;
         archiveSession.Enabled = renameSession.Enabled;
+        pinSession.Enabled = renameSession.Enabled;
+        pinSession.Text = sessions.SelectedItem is LocalSession { Pinned: true }
+            ? "取消会话置顶 (&T)" : "置顶本地会话 (&T)";
         archivedHistory.Enabled = idle && project is not null;
         commandPalette.Enabled = idle && sessionId is not null && agent is { Connected: true };
         showOptions.Enabled = optionsMenu.Enabled = idle && sessionId is not null && options.Count > 0;
@@ -403,7 +409,9 @@ internal sealed partial class MainForm : Form
     private Task RestoreSelectedAsync() => sessions.SelectedItem is LocalSession selected
         ? StartSessionAsync(selected.Id) : Task.CompletedTask;
 
-    private Task StartSessionAsync(string? requested) => RunAsync(async () =>
+    private Task StartSessionAsync(string? requested) => RunAsync(() => StartSessionCoreAsync(requested));
+
+    private async Task StartSessionCoreAsync(string? requested)
     {
         if (project is null)
             return;
@@ -467,7 +475,7 @@ internal sealed partial class MainForm : Form
             messages.Focus();
         else
             input.Focus();
-    });
+    }
 
     private void ClearConversation()
     {
@@ -480,6 +488,7 @@ internal sealed partial class MainForm : Form
         latestReply.Clear();
         changes.Clear();
         toolTitles.Clear();
+        turnResults.Clear();
         contextUsage = lastTurnUsage = null;
         plan = [];
         PlanChanged?.Invoke();
@@ -510,6 +519,7 @@ internal sealed partial class MainForm : Form
             RefreshComposer();
             latestReply.Clear();
             readReplyMenu.Enabled = false;
+            turnResults.Clear();
             var attachmentText = images.Length > 0
                 ? "\n图片附件：" + string.Join("、", images.Select(image => image.Name)) : "";
             if (files.Length > 0)
@@ -730,6 +740,8 @@ internal sealed partial class MainForm : Form
                 break;
             case "tool_call":
             case "tool_call_update":
+                if (prompting)
+                    turnResults.Apply(data);
                 var toolId = StringValue(data, "toolCallId");
                 var title = StringValue(data, "title");
                 if (toolId is not null && title is not null)

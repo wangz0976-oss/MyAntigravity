@@ -68,7 +68,7 @@ public static class SkillCatalog
         return AgentText.Visible(text) + (limited ? "\n\n已显示说明的前 64K 个字符。" : "");
     }
 
-    private static IEnumerable<string> ProjectRoots(string path)
+    internal static IEnumerable<string> ProjectRoots(string path)
     {
         var workspace = new DirectoryInfo(path);
         var chain = new List<string>();

@@ -13,14 +13,17 @@ internal sealed partial class MainForm
         var menu = new ContextMenuStrip { AccessibleName = "历史会话操作" };
         var reopen = Item("恢复所选会话 (&H)", action: RestoreSelectedAsync);
         var rename = Item("重命名本地会话 (&E)", action: RenameSessionAsync);
+        var pin = Item("置顶本地会话 (&T)", action: ToggleSessionPinAsync);
         var archive = Item("移入本地归档 (&A)", action: ArchiveSelectedAsync);
         var openArchive = Item("打开本地归档 (&B)", action: ShowArchivedAsync);
         var remove = Item("从本机历史删除会话 (&D)", action: RemoveSelectedHistoryAsync);
-        menu.Items.AddRange([reopen, rename, archive, openArchive, new ToolStripSeparator(), remove]);
+        menu.Items.AddRange([reopen, rename, pin, archive, openArchive, new ToolStripSeparator(), remove]);
         menu.Opening += (_, _) =>
         {
             reopen.Enabled = restore.Enabled;
             rename.Enabled = renameSession.Enabled;
+            pin.Text = pinSession.Text;
+            pin.Enabled = pinSession.Enabled;
             archive.Enabled = archiveSession.Enabled;
             openArchive.Enabled = archivedHistory.Enabled;
             remove.Enabled = removeSession.Enabled;
@@ -60,6 +63,27 @@ internal sealed partial class MainForm
         PopulateSessions();
         sessions.Focus();
         SetStatus("会话已移入本地归档。按 Ctrl+Shift+H 可以恢复到历史列表。");
+        return Task.CompletedTask;
+    });
+
+    private Task ToggleSessionPinAsync() => RunAsync(() =>
+    {
+        if (project is null || sessions.SelectedItem is not LocalSession row ||
+            settings.FindSession(row.Id, project) is not { Archived: false } local)
+            return Task.CompletedTask;
+
+        bool pinned = !local.Pinned;
+        if (!settings.SetSessionPinned(local.Id, local.Directory, pinned))
+            return Task.CompletedTask;
+        try { storage.Save(settings); }
+        catch
+        {
+            settings.SetSessionPinned(local.Id, local.Directory, local.Pinned);
+            throw;
+        }
+        PopulateSessions(local.Id);
+        sessions.Focus();
+        SetStatus(pinned ? "会话已置顶。" : "已取消会话置顶。", speak: true);
         return Task.CompletedTask;
     });
 
@@ -126,6 +150,47 @@ internal sealed partial class MainForm
         else
             await StartSessionAsync(selected.Id);
     }
+
+    private sealed record SessionSearchHit(LocalSession Session)
+    {
+        private string ProjectName
+        {
+            get
+            {
+                var name = Path.GetFileName(Path.TrimEndingDirectorySeparator(Session.Directory));
+                return AgentText.Visible(name.Length == 0 ? Session.Directory : name);
+            }
+        }
+
+        public string Details => $"项目目录：{AgentText.Visible(Session.Directory)}\n{Session}\n会话 ID：{AgentText.Visible(Session.Id)}";
+
+        public override string ToString() => $"{ProjectName} · {(Session.Archived ? "已归档 · " : "")}{Session}";
+    }
+
+    private Task FindAllSessionsAsync() => RunAsync(async () =>
+    {
+        var entries = settings.IndexedSessions().Select(session =>
+        {
+            if (session.Title is null && project is not null && LocalSettings.PathEquals(session.Directory, project) &&
+                activeTitles.TryGetValue(session.Id, out var title))
+                session = session with { Title = title };
+            return new SessionSearchHit(session);
+        }).ToArray();
+        if (entries.Length == 0)
+        {
+            Dialogs.Text(this, "跨项目查找会话", "已添加的项目中还没有本机会话记录。", showInTaskbar: true);
+            return;
+        }
+
+        var selected = Dialogs.Search(this, "跨项目查找会话", "按项目、标题、日期或会话 ID 筛选",
+            "各项目本机会话", "打开会话 (&O)", entries, entry => $"{entry} {entry.Details}", entry => entry.Details);
+        if (selected is null)
+            return;
+        if (project is null || !LocalSettings.PathEquals(project, selected.Session.Directory))
+            await SelectProjectAsync(selected.Session.Directory);
+        if (!closing)
+            await StartSessionCoreAsync(selected.Session.Id);
+    });
 
     private Task RemoveSelectedProjectAsync() => RunAsync(() => projects.SelectedItem is string directory
         ? RemoveProjectAsync(directory) : Task.CompletedTask);
