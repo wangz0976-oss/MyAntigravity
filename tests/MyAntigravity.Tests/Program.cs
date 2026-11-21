@@ -196,6 +196,23 @@ await Case("安装后沿用旧进程 PATH 也能发现 CLI，PowerShell 保留�
     }
 });
 
+await Case("任务记录按会话、事件类型和正文关键词筛选", () =>
+{
+    var failed = new ActivityRecord("first", DateTimeOffset.UnixEpoch, "失败：编译",
+        "执行 dotnet build\n未找到项目文件", TaskActivityKind.Failure);
+    var asked = new ActivityRecord("second", DateTimeOffset.UnixEpoch, "等待工具审批",
+        "需要运行 dotnet build", TaskActivityKind.Interaction);
+    ActivityRecord[] entries = [failed, asked];
+    Check(entries.Where(entry => entry.Matches(null, TaskActivityKind.Failure, ["编译", "DOTNET", "项目文件"]))
+        .SequenceEqual([failed]), "标题和正文都可匹配，忽略大小写");
+    Check(!failed.Matches("second", null, []) && asked.Matches("second", TaskActivityKind.Interaction, ["dotnet"]) &&
+        !asked.Matches(null, TaskActivityKind.Failure, []) && !failed.Matches(null, null, ["dotnet", "无此关键词"]),
+        "按会话和事件类型隔离，并要求匹配全部关键词");
+    Check(failed.LogText.EndsWith(failed.Detail, StringComparison.Ordinal) && !failed.LogText.Contains(asked.Detail),
+        "复制单条保留其完整多行正文");
+    return Task.CompletedTask;
+});
+
 await Case("安装向导重用已装的 CLI，验证首次安装并保留失败原因", async () =>
 {
     const string path = "test-agy.exe";

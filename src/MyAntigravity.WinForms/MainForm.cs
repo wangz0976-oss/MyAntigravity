@@ -619,19 +619,20 @@ internal sealed partial class MainForm : Form
     private Task<string?> AskPermissionAsync(PermissionRequest request, CancellationToken cancellation) =>
         AskDuringTurnAsync<string?>(request.SessionId, cancellation, null, () =>
         {
-            Log(request.Description, "等待工具审批");
+            Log(request.Description, "等待工具审批", TaskActivityKind.Interaction);
             SetStatus("Agent 请求工具审批。请查看详情。", record: false, speak: true);
             var selected = Dialogs.Permission(Form.ActiveForm ?? this, request, cancellation, RequestCancellationAsync);
-            Log("审批：" + (request.Options.FirstOrDefault(item => item.Id == selected)?.ToString() ?? "已取消"));
+            Log("审批：" + (request.Options.FirstOrDefault(item => item.Id == selected)?.ToString() ?? "已取消"),
+                kind: TaskActivityKind.Interaction);
             if (!cancellation.IsCancellationRequested)
-                SetStatus("审批已提交，等待 Agent 继续。");
+                SetStatus("审批已提交，等待 Agent 继续。", kind: TaskActivityKind.Interaction);
             return selected;
         });
 
     private Task<ElicitationResponse> AskQuestionAsync(ElicitationRequest request, CancellationToken cancellation) =>
         AskDuringTurnAsync(request.SessionId, cancellation, ElicitationResponse.Cancelled, () =>
         {
-            Log(AgentText.Visible(request.Message), "等待回答 Agent 的问题");
+            Log(AgentText.Visible(request.Message), "等待回答 Agent 的问题", TaskActivityKind.Interaction);
             SetStatus("Agent 有问题需要你回答。", record: false, speak: true);
             var answer = Dialogs.Elicitation(Form.ActiveForm ?? this, request, cancellation, RequestCancellationAsync);
             if (!cancellation.IsCancellationRequested)
@@ -641,7 +642,7 @@ internal sealed partial class MainForm : Form
                     "accept" => "回答已提交，等待 Agent 继续。",
                     "decline" => "已拒绝回答。",
                     _ => "已取消回答。"
-                });
+                }, kind: TaskActivityKind.Interaction);
             }
             return answer;
         });
@@ -753,7 +754,8 @@ internal sealed partial class MainForm : Form
                     toolTitles.TryGetValue(toolId, out title);
 
                 var details = AgentText.ToolDetails(data);
-                var phase = StringValue(data, "status") switch
+                var toolStatus = StringValue(data, "status");
+                var phase = toolStatus switch
                 {
                     "completed" => "已完成",
                     "failed" => "失败",
@@ -762,7 +764,7 @@ internal sealed partial class MainForm : Form
                 };
                 string summary = $"{phase}：{AgentText.Visible(title ?? "工具操作")}";
                 Log(title is null || StringValue(data, "title") is not null ? details : $"{AgentText.Visible(title)}\n{details}",
-                    summary);
+                    summary, toolStatus == "failed" ? TaskActivityKind.Failure : TaskActivityKind.General);
                 int diffIndex = 0;
                 foreach (var diff in AgentText.Changes(data))
                 {
@@ -788,10 +790,10 @@ internal sealed partial class MainForm : Form
         }
     }
 
-    private void SetStatus(string text, bool record = true, bool speak = false)
+    private void SetStatus(string text, bool record = true, bool speak = false, TaskActivityKind kind = TaskActivityKind.General)
     {
         if (record)
-            Log(text);
+            Log(text, kind: kind);
         if (status.Text == text)
             return;
         status.AccessibleName = text;
@@ -821,7 +823,7 @@ internal sealed partial class MainForm : Form
 
     private void ReportError(string text)
     {
-        SetStatus($"错误：{AgentText.Visible(text)}");
+        SetStatus($"错误：{AgentText.Visible(text)}", kind: TaskActivityKind.Failure);
         Dialogs.Text(this, "MyAntigravity 错误", AgentText.Visible(text));
     }
 
