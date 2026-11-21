@@ -42,11 +42,14 @@ internal sealed partial class MainForm
         using var window = Dialogs.Window("账户与连接", new Size(790, 415));
         window.ShowInTaskbar = true;
         var details = ReadableText("账户与连接详情");
-        details.AccessibleDescription = "Alt 加 R 重新核验，Alt 加 U 刷新模型额度，Alt 加 T 在官方终端查询，Esc 关闭。";
+        details.AccessibleDescription = "Alt 加 R 重新检测并核验，Alt 加 I 打开官方安装指南，Alt 加 U 刷新额度，Esc 关闭。";
         var verify = new Button { Text = "重新核验 (&R)", AutoSize = true };
         var quota = new Button { Text = "刷新模型额度 (&U)", AutoSize = true };
         var quotaTerminal = new Button { Text = "在官方终端查询 (&T)", AutoSize = true };
         var quotaHelp = new Button { Text = "官方额度说明 (&H)", AutoSize = true };
+        var install = new Button { Text = "官方 CLI 安装指南 (&I)", AutoSize = true };
+        var copyDiagnostic = new Button { Text = "复制连接诊断 (&D)", AutoSize = true,
+            AccessibleDescription = "复制版本、CLI 文件名和连接状态。省略完整路径、账号和消息内容。" };
         var close = new Button { Text = "关闭 (&C)", AutoSize = true, DialogResult = DialogResult.Cancel };
         using var watcher = new System.Windows.Forms.Timer { Interval = 400 };
         using var dialogLifetime = new CancellationTokenSource();
@@ -79,7 +82,7 @@ internal sealed partial class MainForm
                 + (last?.Tier is { } tier ? $"账户套餐：{tier}\n" : "")
                 + (checkStatus is null ? "" : $"核验进度：{checkStatus}\n");
             quotaSectionStart = document.Length;
-            string quotaHint = executable is null ? "找到官方 CLI 后即可查询。"
+            string quotaHint = executable is null ? "按 Alt+I 打开安装指南，安装后按 Alt+R 重新检测。"
                 : Cli.SupportsQuotaQuery(cliVersion) ? "按 Alt+U 查询。"
                 : "应用内查询需要官方 CLI 1.5.0 或更新版本。按 Alt+T 可打开官方终端。";
             document += $"模型额度：{quotaStatus ?? quotaReport ?? quotaHint}";
@@ -91,7 +94,8 @@ internal sealed partial class MainForm
                 details.Text = document;
                 details.Select(Math.Min(caret, details.TextLength), 0);
             }
-            verify.Enabled = quotaTerminal.Enabled = executable is not null && !checking && !queryingQuota;
+            verify.Enabled = !checking && !queryingQuota;
+            quotaTerminal.Enabled = verify.Enabled && executable is not null && cliVersion is not null;
             quota.Enabled = quotaTerminal.Enabled && Cli.SupportsQuotaQuery(cliVersion);
             if (focus)
             {
@@ -116,7 +120,10 @@ internal sealed partial class MainForm
                 }
                 Render();
                 if (executable is null)
+                {
+                    checkStatus = Cli.NotInstalled;
                     return;
+                }
                 Directory.CreateDirectory(dataDirectory);
                 cliVersion = await Cli.VersionAsync(executable, dataDirectory);
                 if (verifyLogin && !closed)
@@ -125,6 +132,11 @@ internal sealed partial class MainForm
                     RecordAccountVerification(verification);
                     checkStatus = verification.RequiresLogin ? "需要登录。请从账户菜单完成 Google 登录。" : "官方 ACP 已接受凭据。";
                 }
+            }
+            catch (FileNotFoundException error)
+            {
+                executable = cliVersion = quotaStatus = quotaReport = null;
+                checkStatus = error.Message;
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException or TimeoutException
                 or AcpException or ArgumentException or System.ComponentModel.Win32Exception or InvalidOperationException)
@@ -207,6 +219,28 @@ internal sealed partial class MainForm
             }
         };
         quotaHelp.Click += (_, _) => OpenLink(new Uri("https://antigravity.google/docs/cli/commands/usage"));
+        install.Click += (_, _) => OpenLink(Cli.SetupGuide);
+        copyDiagnostic.Click += (_, _) =>
+        {
+            string loginStatus = executable is not null && settings.LastAccountVerification is { } verification &&
+                LocalSettings.PathEquals(verification.Executable, executable)
+                ? verification.RequiresLogin ? "需要登录" : "已核验"
+                : "尚未核验";
+            string versionText = Version.TryParse(cliVersion?.Split('-', '+')[0], out var version)
+                ? version.ToString() : "未检测到版本号";
+            string diagnostic = $"MyAntigravity {Program.Version}\n"
+                + $"CLI：{(executable is null ? "未找到" : Path.GetFileName(executable))}\n"
+                + $"CLI 版本：{versionText}\n登录：{loginStatus}\n"
+                + $"ACP：{(agent is { Connected: true } && connectionReady ? "已连接" : "未连接")}\n"
+                + $"项目：{(project is null ? "未选择" : "已选择")}";
+            try
+            {
+                Clipboard.SetText(diagnostic);
+                checkStatus = "连接诊断已复制。";
+            }
+            catch (System.Runtime.InteropServices.ExternalException) { checkStatus = "剪贴板暂不可用。"; }
+            Render(focus: true);
+        };
         watcher.Tick += (_, _) => Render();
         window.FormClosing += (_, _) => { closed = true; watcher.Stop(); dialogLifetime.Cancel(); };
         window.Shown += async (_, _) =>
@@ -215,7 +249,7 @@ internal sealed partial class MainForm
             await CheckAsync(false);
         };
         window.CancelButton = close;
-        Dialogs.Vertical(window, details, Buttons(1, verify, quota, quotaTerminal, quotaHelp, close));
+        Dialogs.Vertical(window, details, Buttons(1, verify, quota, quotaTerminal, install, quotaHelp, copyDiagnostic, close));
         Render();
         window.ActiveControl = details;
         window.ShowDialog(this);

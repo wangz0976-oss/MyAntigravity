@@ -10,6 +10,7 @@ public sealed record LocalSession(string Id, string Directory, string? Title, Da
 
 public sealed record RemovedSession(string Id, string Directory);
 public sealed record ProjectDirectory(string Project, string Directory);
+public sealed record SessionWorkspace(string Session, string Directory, string Draft, ReadingBookmark? Bookmark);
 
 public sealed class LocalSettings
 {
@@ -19,11 +20,45 @@ public sealed class LocalSettings
     public bool AutoReadReply { get; set; }
     public bool Sandbox { get; set; }
     public string UpdateChannel { get; set; } = "beta";
+    public bool CheckUpdatesOnStartup { get; set; } = true;
     public AccountVerification? LastAccountVerification { get; set; }
     public List<string> Projects { get; set; } = [];
     public List<LocalSession> Sessions { get; set; } = [];
     public List<RemovedSession> RemovedSessions { get; set; } = [];
     public List<ProjectDirectory> AdditionalDirectories { get; set; } = [];
+    public List<SessionWorkspace> SessionWorkspaces { get; set; } = [];
+
+    public SessionWorkspace? FindWorkspace(string session, string directory) =>
+        SessionWorkspaces.Find(item => item.Session == session && PathEquals(item.Directory, directory));
+
+    public bool SaveDraft(string session, string directory, string draft) =>
+        SaveWorkspace(session, directory, draft, FindWorkspace(session, directory)?.Bookmark);
+
+    public bool SaveBookmark(string session, string directory, ReadingBookmark bookmark) =>
+        SaveWorkspace(session, directory, FindWorkspace(session, directory)?.Draft ?? "", bookmark);
+
+    private bool SaveWorkspace(string session, string directory, string draft, ReadingBookmark? bookmark)
+    {
+        if (IsSessionRemoved(session, directory))
+            return false;
+        int index = SessionWorkspaces.FindIndex(item => item.Session == session && PathEquals(item.Directory, directory));
+        if (draft.Length == 0 && bookmark is null)
+        {
+            if (index < 0)
+                return false;
+            SessionWorkspaces.RemoveAt(index);
+            return true;
+        }
+        if (index >= 0 && SessionWorkspaces[index] is { } previous)
+        {
+            if (previous.Draft == draft && previous.Bookmark == bookmark)
+                return false;
+            SessionWorkspaces[index] = previous with { Draft = draft, Bookmark = bookmark };
+        }
+        else
+            SessionWorkspaces.Add(new SessionWorkspace(session, directory, draft, bookmark));
+        return true;
+    }
 
     public void RememberProject(string directory)
     {
@@ -68,6 +103,7 @@ public sealed class LocalSettings
         if (IsSessionRemoved(id, directory))
             return false;
         Sessions.RemoveAll(session => session.Id == id && PathEquals(session.Directory, directory));
+        SessionWorkspaces.RemoveAll(item => item.Session == id && PathEquals(item.Directory, directory));
         RemovedSessions.Add(new RemovedSession(id, directory));
         return true;
     }

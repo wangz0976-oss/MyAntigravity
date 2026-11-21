@@ -6,19 +6,40 @@ namespace MyAntigravity;
 
 public static class Cli
 {
-    public static readonly Uri SetupGuide = new("https://antigravity.google/docs/getting-started");
+    public static readonly Uri SetupGuide = new("https://antigravity.google/docs/getting-started?tab=cli");
+    public const string NotInstalled = "未找到 Google Antigravity CLI（agy.exe）。请打开官方 CLI 安装指南，安装后重新检测。";
 
     public static string? Find(string? configured)
     {
         if (!string.IsNullOrWhiteSpace(configured))
         {
-            var explicitPath = Path.GetFullPath(configured.Trim());
-            if (!Path.IsPathFullyQualified(configured.Trim()) || !File.Exists(explicitPath) ||
-                !Path.GetFileName(explicitPath).EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-                throw new FileNotFoundException("设置里的 CLI 路径须指向存在的 Windows 可执行文件。", explicitPath);
-            return explicitPath;
+            try { return ValidatePath(configured); }
+            catch (FileNotFoundException)
+            {
+                string? installed = FindInstalled();
+                if (installed is not null)
+                    return installed;
+                throw;
+            }
         }
+        return FindInstalled();
+    }
 
+    public static string ValidatePath(string configured)
+    {
+        string full = Environment.ExpandEnvironmentVariables(configured.Trim().Trim('"'));
+        if (string.Equals(Path.GetFileName(full), "Antigravity.exe", StringComparison.OrdinalIgnoreCase))
+            throw new FileNotFoundException("Antigravity.exe 是 Google 的桌面版。请安装官方 Antigravity CLI 并选择 agy.exe。");
+        if (!Path.IsPathFullyQualified(full) || !string.Equals(Path.GetFileName(full), "agy.exe", StringComparison.OrdinalIgnoreCase))
+            throw new FileNotFoundException("请填写官方 Antigravity CLI 的完整路径，并选择 agy.exe。");
+        var path = Path.GetFullPath(full);
+        if (!File.Exists(path))
+            throw new FileNotFoundException("这个路径下找不到 agy.exe。请重新选择，或清空路径后自动检测。", path);
+        return path;
+    }
+
+    private static string? FindInstalled()
+    {
         for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
         {
             var local = Path.Combine(dir.FullName, "local", "agy", "agy.exe");

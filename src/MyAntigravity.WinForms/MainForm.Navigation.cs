@@ -186,12 +186,14 @@ internal sealed partial class MainForm
         int index = sessions.SelectedIndex;
         var history = settings.Sessions.ToList();
         var removed = settings.RemovedSessions.ToList();
+        var workspaces = settings.SessionWorkspaces.ToList();
         settings.RemoveSession(selected.Id, directory);
         try { storage.Save(settings); }
         catch
         {
             settings.Sessions = history;
             settings.RemovedSessions = removed;
+            settings.SessionWorkspaces = workspaces;
             throw;
         }
         if (sessionId == selected.Id)

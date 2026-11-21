@@ -1,8 +1,38 @@
 using System.Text;
+using System.Security.Cryptography;
 
 namespace MyAntigravity;
 
 public enum MessageSpeaker { User, Assistant, FollowUp, Notice }
+
+public sealed record ReadingBookmark(int Index, MessageSpeaker Speaker, string Digest)
+{
+    public static ReadingBookmark From(ConversationMessage message) =>
+        new(message.Index, message.Speaker, Fingerprint(message));
+
+    public int Locate(IReadOnlyList<ConversationMessage> messages)
+    {
+        if (messages.Count == 0)
+            return -1;
+        int nearest = Math.Clamp(Index, 0, messages.Count - 1);
+        if (Matches(messages[nearest]))
+            return nearest;
+        for (int offset = 1; offset < messages.Count; offset++)
+        {
+            if (nearest - offset >= 0 && Matches(messages[nearest - offset]))
+                return nearest - offset;
+            if (nearest + offset < messages.Count && Matches(messages[nearest + offset]))
+                return nearest + offset;
+        }
+        return nearest;
+    }
+
+    private bool Matches(ConversationMessage message) =>
+        message.Speaker == Speaker && Fingerprint(message) == Digest;
+
+    private static string Fingerprint(ConversationMessage message) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(message.Text.ReplaceLineEndings("\n"))));
+}
 
 public sealed class ConversationMessage
 {

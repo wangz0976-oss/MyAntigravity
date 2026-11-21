@@ -46,6 +46,7 @@ internal sealed partial class MainForm : Form
         UpdateLiveSetting();
         ReloadProjects();
         UpdateCommands();
+        workspaceSave.Tick += (_, _) => FlushWorkspace();
         activityTimer.Tick += (_, _) =>
         {
             activityTimer.Stop();
@@ -54,7 +55,7 @@ internal sealed partial class MainForm : Form
             queuedActivity = null;
         };
 
-        Shown += (_, _) =>
+        Shown += async (_, _) =>
         {
             if (loadError is not null)
                 ReportError(loadError);
@@ -62,6 +63,7 @@ internal sealed partial class MainForm : Form
                 projects.Focus();
             else
                 addProject.Focus();
+            await CheckStartupUpdateAsync(new Updates(updateHttp, dataDirectory), Program.Version);
         };
     }
 
@@ -120,6 +122,8 @@ internal sealed partial class MainForm : Form
         input.TextChanged += (_, _) =>
         {
             draft.Text = input.Text;
+            if (draftOwner is { } owner)
+                RememberDraft(owner, draft);
             UpdateComposerCommands();
         };
 
@@ -151,6 +155,11 @@ internal sealed partial class MainForm : Form
         {
             RecordAccountVerification(connectedExecutable, true);
             ReportError("需要登录 Google。请从“账户”菜单选择“用浏览器登录 Google”。");
+        }
+        catch (CliSetupException error)
+        {
+            if (!closing)
+                ShowCliGuide(error.Message);
         }
         catch (Exception error) when (error is IOException or AcpException or InvalidOperationException or
             TimeoutException or System.ComponentModel.Win32Exception or UnauthorizedAccessException or ArgumentException or
@@ -249,8 +258,7 @@ internal sealed partial class MainForm : Form
             return existing;
 
         await ResetAgentAsync();
-        var executable = Cli.Find(settings.Executable) ??
-            throw new FileNotFoundException("找不到 Google Antigravity CLI。请打开“账户 → 官方 CLI 安装指南”，或在“设置 → 常规设置”选择 agy.exe。");
+        var executable = RequireCli();
         var current = new AcpAgent(AcpStartInfo(executable, WorkingDirectory()), AskPermissionAsync, AskQuestionAsync);
         connectedExecutable = executable;
         current.SessionUpdated += (id, data) => Post(() =>
@@ -316,7 +324,7 @@ internal sealed partial class MainForm : Form
 
     private async Task DetectCliAsync()
     {
-        var executable = Cli.Find(settings.Executable) ?? throw new FileNotFoundException("未找到 agy.exe。");
+        var executable = RequireCli();
         var detected = await Cli.VersionAsync(executable, WorkingDirectory());
         Dialogs.Text(this, "官方 CLI 检测结果", $"版本：{detected}\n位置：{executable}");
     }
@@ -340,7 +348,7 @@ internal sealed partial class MainForm : Form
 
     private async Task TerminalLoginAsync()
     {
-        var executable = Cli.Find(settings.Executable) ?? throw new FileNotFoundException("未找到 agy.exe。");
+        var executable = RequireCli();
         await ResetAgentAsync();
         using var login = Process.Start(Cli.StartInfo(executable, WorkingDirectory(), false, "acp", "--login"))
             ?? throw new IOException("无法启动官方登录终端。");
@@ -451,8 +459,10 @@ internal sealed partial class MainForm : Form
         PopulateSessions(sessionId);
         transcript.EndChunks();
         RenderMessages();
+        bool positioned = RestoreReadingPosition();
         SetStatus(requested is null ? "会话已创建。可从“消息”菜单发送。"
-            : current.CanReplay ? "历史会话已恢复。" : "会话已恢复，当前 CLI 不回放历史消息。");
+            : current.CanReplay ? positioned ? "历史会话已恢复，已定位到上次阅读位置。" : "历史会话已恢复。"
+            : "会话已恢复，当前 CLI 不回放历史消息。");
         if (requested is not null && current.CanReplay && messages.Items.Count > 0)
             messages.Focus();
         else
@@ -492,6 +502,8 @@ internal sealed partial class MainForm : Form
             if (files.Length > 0 && !current.CanSendTextFiles)
                 throw new InvalidOperationException("当前官方 CLI 不支持文本附件。请在附件窗口移除文本附件或更换 CLI。");
 
+            var pending = new SendingText(text);
+            sending.Sending.Add(pending);
             sending.Text = "";
             sending.Images.Clear();
             sending.TextFiles.Clear();
@@ -508,6 +520,8 @@ internal sealed partial class MainForm : Form
             {
                 var result = await current.PromptAsync(activeSession, text, images.Select(image => image.Payload).ToArray(),
                     files.Select(file => file.Payload).ToArray());
+                sending.Sending.Remove(pending);
+                RememberDraft(owner, sending);
                 if (sessionId == activeSession && ReferenceEquals(agent, current))
                     lastTurnUsage = SessionUsage.LastTurn(result);
                 var reason = StringValue(result, "stopReason");
@@ -528,7 +542,11 @@ internal sealed partial class MainForm : Form
             catch
             {
                 if (!closing)
+                {
+                    sending.Sending.Remove(pending);
                     RestoreFailedDraft(sending, owner, text, images, files);
+                    RememberDraft(owner, sending);
+                }
                 throw;
             }
             finally
@@ -817,7 +835,13 @@ internal sealed partial class MainForm : Form
         base.OnFormClosing(e);
         if (e.Cancel || closing)
             return;
+        RememberReadingPosition();
+        if (draftOwner is { } owner)
+            RememberDraft(owner, draft);
+        FlushWorkspace();
         closing = true;
+        startupUpdate?.Cancel();
+        workspaceSave.Dispose();
         activityTimer.Dispose();
         messageRefresh.Dispose();
         if (agent is not null)

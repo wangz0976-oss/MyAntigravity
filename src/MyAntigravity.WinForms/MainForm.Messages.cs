@@ -12,7 +12,7 @@ internal sealed partial class MainForm
         Dock = DockStyle.Fill, IntegralHeight = false
     };
     private readonly ToolStripMenuItem openMessage = Item("阅读所选消息 (&R)");
-    private readonly ToolStripMenuItem speakMessage = Item("朗读所选消息 (&S)");
+    private readonly ToolStripMenuItem speakMessage = Item("朗读所选消息 (&U)");
     private readonly ToolStripMenuItem copyMessage = Item("复制所选消息 (&C)");
     private readonly ToolStripMenuItem findMessage = Item("查找消息 (&F)");
     private readonly ToolStripMenuItem readConversation = Item("阅读完整会话 (&L)");
@@ -28,7 +28,11 @@ internal sealed partial class MainForm
         findMessage.Click += (_, _) => FindMessage();
         readConversation.Click += (_, _) => Dialogs.Text(this, "完整会话",
             string.Join("\n\n", transcript.Messages.Select(message => $"{message.Label}：\n{message.Text}")));
-        messages.SelectedIndexChanged += (_, _) => UpdateMessageCommands();
+        messages.SelectedIndexChanged += (_, _) =>
+        {
+            UpdateMessageCommands();
+            RememberReadingPosition();
+        };
         messages.DoubleClick += (_, _) => OpenSelectedMessage();
         messageRefresh.Tick += (_, _) => RenderMessages();
 
@@ -65,6 +69,7 @@ internal sealed partial class MainForm
         int previousCount = messages.Items.Count;
         int selected = messages.SelectedIndex;
         int top = previousCount > 0 ? messages.TopIndex : 0;
+        renderingMessages = true;
         messages.BeginUpdate();
         try
         {
@@ -89,6 +94,7 @@ internal sealed partial class MainForm
         {
             messages.EndUpdate();
             updatedMessages.Clear();
+            renderingMessages = false;
         }
         UpdateMessageCommands();
     }

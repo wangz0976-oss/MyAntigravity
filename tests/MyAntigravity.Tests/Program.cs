@@ -35,6 +35,88 @@ if (args is ["--live", var executable])
 }
 
 int testCount = 0;
+await Case("更新日志转换为读屏纯文本", () =>
+{
+    var notes = """
+        ## 更新内容
+        > **CLI 支持**和 *键盘操作*
+        - 用 `agy.exe` 连接
+        - [官方安装指南](https://example.com/install) &amp; ~~旧入口~~
+        ~~~text
+        # 原样保留命令内的标点
+        ~~~
+        """;
+    var expected = """
+        更新内容
+        CLI 支持和 键盘操作
+        • 用 agy.exe 连接
+        • 官方安装指南 & 旧入口
+
+        # 原样保留命令内的标点
+        """;
+    Check(UpdateNotes.PlainText(notes).ReplaceLineEndings("\n") == expected.ReplaceLineEndings("\n"),
+        "去除标题、引用、强调、链接和代码围栏的 Markdown 标记，保留内容");
+    return Task.CompletedTask;
+});
+
+await Case("CLI 路径拒绝桌面版并恢复自动检测", () =>
+{
+    var folder = Directory.CreateDirectory(Path.Combine(scratch, "CLI 路径检测")).FullName;
+    var desktop = Path.Combine(folder, "Antigravity.exe");
+    var cli = Path.Combine(folder, "agy.exe");
+    File.WriteAllText(desktop, "");
+    File.WriteAllText(cli, "");
+    try
+    {
+        Cli.ValidatePath(desktop);
+        throw new InvalidOperationException("桌面版路径被接受。");
+    }
+    catch (FileNotFoundException error)
+    {
+        Check(error.Message.Contains("桌面版") && error.Message.Contains("agy.exe"), "解释两种程序的区别");
+    }
+    Check(Cli.ValidatePath($"\"{cli}\"") == cli && Cli.Find(cli) == cli, "带引号的官方路径可识别");
+    string? automaticallyDetected = Cli.Find(null);
+    if (automaticallyDetected is null)
+        Throws<FileNotFoundException>(() => Cli.Find(desktop));
+    else
+        Check(Cli.Find(desktop) == automaticallyDetected, "已安装时绕过旧版误填路径");
+    return Task.CompletedTask;
+});
+
+await Case("草稿与阅读位置跨重启并按项目会话隔离", () =>
+{
+    var data = Directory.CreateDirectory(Path.Combine(scratch, "工作状态")).FullName;
+    var file = new SettingsFile(data);
+    File.WriteAllText(Path.Combine(data, "settings.json"), """{"Announce":false,"Projects":[],"Sessions":[]}""");
+    var settings = file.Load();
+    Check(settings.SessionWorkspaces.Count == 0 && !settings.Announce, "兼容旧设置");
+    string project = Path.Combine(scratch, "测试项目");
+    string other = Path.Combine(scratch, "另一个项目");
+    var history = new ConversationTranscript();
+    history.Add(MessageSpeaker.User, "第一条");
+    var current = history.Add(MessageSpeaker.Assistant, "第二条\r\n继续读这里");
+    var bookmark = ReadingBookmark.From(current);
+    Check(settings.SaveDraft("one", project, "未发送的中文草稿") && settings.SaveBookmark("one", project, bookmark) &&
+        settings.SaveDraft("one", other, "另一个项目的草稿"), "草稿和选中消息分别存储");
+    settings.RememberSession("one", project);
+    file.Save(settings);
+    settings = file.Load();
+    Check(settings.FindWorkspace("one", project) is { Draft: "未发送的中文草稿", Bookmark: not null } &&
+        settings.FindWorkspace("one", other)?.Draft == "另一个项目的草稿", "重新加载后仍按项目隔离");
+    var replay = new ConversationTranscript();
+    replay.Add(MessageSpeaker.Notice, "新插入的说明");
+    replay.Add(MessageSpeaker.User, "第一条");
+    replay.Add(MessageSpeaker.Assistant, "第二条\n继续读这里");
+    Check(bookmark.Locate(replay.Messages) == 2, "用正文指纹重新找到消息，兼容 Windows 换行差异");
+    settings.SaveDraft("one", project, "");
+    Check(settings.FindWorkspace("one", project)?.Bookmark == bookmark, "清空已发草稿后保留阅读位置");
+    Check(settings.RemoveSession("one", project) && settings.FindWorkspace("one", project) is null &&
+        !settings.SaveDraft("one", project, "延迟到达的保存") && settings.FindWorkspace("one", other) is not null,
+        "删除会话清理本机状态，延迟保存不复活记录");
+    return Task.CompletedTask;
+});
+
 await Case("长消息的代码块、行号和链接定位", () =>
 {
     string fence = new('\x60', 3);
@@ -164,7 +246,7 @@ await Case("路径、设置和会话索引", () =>
         restored.ProjectSessions(project, official, titles) is [{ Id: "id-1", Archived: false }],
         "恢复归档后重现原会话");
     Check(!Directory.EnumerateFiles(scratch, ".settings-*.tmp").Any(), "设置临时文件已清理");
-    Throws<FileNotFoundException>(() => Cli.Find(Path.Combine(project, "bad.exe")));
+    Throws<FileNotFoundException>(() => Cli.ValidatePath(Path.Combine(project, "bad.exe")));
     return Task.CompletedTask;
 });
 

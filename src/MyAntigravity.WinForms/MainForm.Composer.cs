@@ -5,10 +5,16 @@ internal sealed partial class MainForm
     private sealed class ComposerDraft
     {
         internal string Text = "";
+        internal readonly List<SendingText> Sending = [];
         internal readonly List<ImageAttachment> Images = [];
         internal readonly List<TextAttachment> TextFiles = [];
         internal bool HasAttachments => Images.Count != 0 || TextFiles.Count != 0;
-        internal bool IsEmpty => Text.Length == 0 && !HasAttachments;
+        internal bool IsEmpty => Text.Length == 0 && !HasAttachments && Sending.Count == 0;
+    }
+
+    private sealed class SendingText(string text)
+    {
+        internal string Text { get; } = text;
     }
 
     private readonly Dictionary<(string Project, string Session), ComposerDraft> savedDrafts = [];
@@ -26,18 +32,22 @@ internal sealed partial class MainForm
             return;
 
         var unassignedText = draftOwner is null ? draft.Text : "";
-        if (draftOwner is { } previous && !draft.IsEmpty)
-            savedDrafts[previous] = draft;
+        if (draftOwner is { } previous)
+        {
+            RememberReadingPosition();
+            RememberDraft(previous, draft);
+            if (!draft.IsEmpty && !settings.IsSessionRemoved(previous.Session, previous.Project))
+                savedDrafts[previous] = draft;
+        }
+        readingReady = false;
 
         draftOwner = next;
-        if (next is { } key && savedDrafts.Remove(key, out var existing))
+        draft = next is { } key && savedDrafts.Remove(key, out var existing) ? existing : new ComposerDraft
         {
-            draft = existing;
-            if (unassignedText.Length > 0)
-                draft.Text = draft.Text.Length > 0 ? draft.Text + Environment.NewLine + unassignedText : unassignedText;
-        }
-        else
-            draft = new ComposerDraft { Text = unassignedText };
+            Text = next is { } saved ? settings.FindWorkspace(saved.Session, saved.Project)?.Draft ?? "" : ""
+        };
+        if (unassignedText.Length > 0)
+            draft.Text = draft.Text.Length > 0 ? draft.Text + Environment.NewLine + unassignedText : unassignedText;
         RefreshComposer();
     }
 
@@ -91,12 +101,14 @@ internal sealed partial class MainForm
             return;
         var sending = draft;
         var text = sending.Text;
+        var pending = new SendingText(text);
         bool cleared = false;
         steering = true;
         UpdateComposerCommands();
         try
         {
             var request = current.SteerAsync(session, text);
+            sending.Sending.Add(pending);
             sending.Text = "";
             cleared = true;
             RefreshComposer();
@@ -120,6 +132,11 @@ internal sealed partial class MainForm
         }
         finally
         {
+            if (!closing)
+            {
+                sending.Sending.Remove(pending);
+                RememberDraft(owner, sending);
+            }
             steering = false;
             UpdateComposerCommands();
         }
