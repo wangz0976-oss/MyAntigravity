@@ -10,5 +10,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../MyAntigravity.Core/MyAntigravity.Core.csproj" />
+    <EmbeddedResource Include="../../help/用户手册.txt" LogicalName="MyAntigravity.UserGuide.txt" />
+    <EmbeddedResource Include="../../CHANGELOG.md" LogicalName="MyAntigravity.Changelog.md" />
   </ItemGroup>
 </Project>

@@ -51,16 +51,42 @@ public static class Cli
                 return local;
         }
 
-        var standard = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "agy", "bin", "agy.exe");
+        return FindInstalledIn(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            Environment.GetEnvironmentVariable("PATH"), ReadRegisteredPath);
+    }
+
+    internal static string? FindInstalledIn(string localAppData, string? processPath,
+        Func<EnvironmentVariableTarget, string?> readRegisteredPath)
+    {
+        var standard = Path.Combine(localAppData, "agy", "bin", "agy.exe");
         if (File.Exists(standard))
             return standard;
 
-        foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator))
+        return FindOnPath(processPath) ?? FindOnPath(readRegisteredPath(EnvironmentVariableTarget.User)) ??
+            FindOnPath(readRegisteredPath(EnvironmentVariableTarget.Machine));
+    }
+
+    private static string? ReadRegisteredPath(EnvironmentVariableTarget scope)
+    {
+        if (!OperatingSystem.IsWindows())
+            return null;
+        try { return Environment.GetEnvironmentVariable("PATH", scope); }
+        catch (Exception error) when (error is System.Security.SecurityException or UnauthorizedAccessException)
         {
-            var path = directory.Trim().Trim('"');
-            if (Path.IsPathFullyQualified(path) && File.Exists(Path.Combine(path, "agy.exe")))
-                return Path.Combine(path, "agy.exe");
+            return null;
+        }
+    }
+
+    private static string? FindOnPath(string? path)
+    {
+        foreach (var directory in (path ?? "").Split(Path.PathSeparator))
+        {
+            var expanded = Environment.ExpandEnvironmentVariables(directory.Trim().Trim('"'));
+            if (!Path.IsPathFullyQualified(expanded))
+                continue;
+            var executable = Path.Combine(expanded, "agy.exe");
+            if (File.Exists(executable))
+                return executable;
         }
 
         return null;
@@ -87,6 +113,23 @@ public static class Cli
         foreach (var argument in arguments)
             info.ArgumentList.Add(argument);
         return info;
+    }
+
+    public static ProcessStartInfo WindowsInstallStartInfo(string cwd)
+    {
+        var powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
+            "WindowsPowerShell", "v1.0", "powershell.exe");
+        return StartInfo(powershell, cwd, true, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+            "$OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); " +
+            "$ProgressPreference = 'SilentlyContinue'; $ErrorActionPreference = 'Stop'; " + InstallCommand);
+    }
+
+    public static async Task InstallWindowsAsync(string cwd, CancellationToken cancellation)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new InvalidOperationException("此安装入口用于 Windows。");
+        await ReadOutputAsync(WindowsInstallStartInfo(cwd), "官方 CLI 安装", cancellation, TimeSpan.FromMinutes(5),
+            showError: true).ConfigureAwait(false);
     }
 
     public static async Task<string> VersionAsync(string executable, string cwd)
@@ -142,12 +185,16 @@ public static class Cli
         string operation, params string[] arguments) =>
         ReadOutputAsync(executable, cwd, operation, CancellationToken.None, TimeSpan.FromSeconds(12), arguments);
 
-    private static async Task<(string Output, string Error)> ReadOutputAsync(string executable, string cwd,
-        string operation, CancellationToken cancellationToken, TimeSpan timeLimit, params string[] arguments)
+    private static Task<(string Output, string Error)> ReadOutputAsync(string executable, string cwd,
+        string operation, CancellationToken cancellationToken, TimeSpan timeLimit, params string[] arguments) =>
+        ReadOutputAsync(StartInfo(executable, cwd, true, arguments), operation, cancellationToken, timeLimit);
+
+    internal static async Task<(string Output, string Error)> ReadOutputAsync(ProcessStartInfo start, string operation,
+        CancellationToken cancellationToken, TimeSpan timeLimit, bool showError = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        using var process = Process.Start(StartInfo(executable, cwd, true, arguments))
-            ?? throw new IOException("无法启动 Antigravity CLI。");
+        using var process = Process.Start(start)
+            ?? throw new IOException(showError ? "无法启动 Windows PowerShell。" : "无法启动 Antigravity CLI。");
         process.StandardInput.Close();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(timeLimit);
@@ -159,7 +206,11 @@ public static class Cli
             var output = (await stdout.ConfigureAwait(false)).Trim();
             var error = (await stderr.ConfigureAwait(false)).Trim();
             if (process.ExitCode != 0)
-                throw new IOException($"{operation}失败（退出码 {process.ExitCode}）。");
+            {
+                var detail = showError ? (error.Length > 0 ? error : output) : "";
+                throw new IOException($"{operation}失败（退出码 {process.ExitCode}）。" +
+                    (detail.Length > 0 ? $"\n{detail[..Math.Min(detail.Length, 1000)]}" : ""));
+            }
             return (output, error);
         }
         catch (OperationCanceledException)

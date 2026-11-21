@@ -5,6 +5,16 @@ namespace MyAntigravity;
 
 public static partial class UpdateNotes
 {
+    public static string ForVersion(string changelog, string version)
+    {
+        var lines = changelog.ReplaceLineEndings("\n").Split('\n');
+        int heading = Array.FindIndex(lines, line => line.TrimEnd().Equals($"## {version}", StringComparison.Ordinal));
+        if (heading < 0)
+            return "";
+        return string.Join('\n', lines.Skip(heading + 1)
+            .TakeWhile(line => !line.StartsWith("## ", StringComparison.Ordinal))).Trim();
+    }
+
     [GeneratedRegex(@"^\s{0,3}#{1,6}(?:\s+|$)|(?<=\s)#+\s*$", RegexOptions.Multiline)]
     private static partial Regex HeadingMarks();
     [GeneratedRegex(@"^[ \t]{0,3}>(?:[ \t]?>(?:[ \t]?))*[ \t]?", RegexOptions.Multiline)]

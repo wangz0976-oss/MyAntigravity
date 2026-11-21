@@ -93,6 +93,15 @@ await Case("更新日志转换为读屏纯文本", () =>
         """;
     Check(UpdateNotes.PlainText(notes).ReplaceLineEndings("\n") == expected.ReplaceLineEndings("\n"),
         "去除标题、引用、强调、链接和代码围栏的 Markdown 标记，保留内容");
+    var changelog = File.ReadAllText(Path.Combine(Directory.GetCurrentDirectory(), "CHANGELOG.md"));
+    string beta15 = UpdateNotes.ForVersion(changelog, "0.1.0-beta.15");
+    Check(beta15.Contains("会话 → 跨项目查找会话") && beta15.Contains("任务 → 本轮结果") &&
+        !beta15.Contains("启动时检测 Windows CLI") && !beta15.Contains("新增启动更新提醒"),
+        "日志显示当前安装版本的具体入口，并隔离其他版本和未发布改动");
+    Check(UpdateNotes.ForVersion(changelog, "0.1.0-beta.1") == "", "按完整版本匹配日志");
+    string beta18 = UpdateNotes.ForVersion(changelog, "0.1.0-beta.18");
+    Check(beta18.Contains("Ctrl+G") && beta18.Contains("Alt+F") && beta18.Contains("Alt+A") &&
+        !beta18.Contains("跨项目查找会话"), "新版更新窗显示目标版本的操作入口和修复");
     return Task.CompletedTask;
 });
 
@@ -125,6 +134,15 @@ await Case("CLI 路径拒绝桌面版并恢复自动检测", () =>
         }
     }
     Check(Cli.InstallCommand == "irm https://antigravity.google/cli/install.ps1 | iex", "复制 Google 官方 PowerShell 命令");
+    if (OperatingSystem.IsWindows())
+    {
+        var setup = Cli.WindowsInstallStartInfo(folder);
+        Check(Path.IsPathFullyQualified(setup.FileName) && Path.GetFileName(setup.FileName) == "powershell.exe" &&
+            setup.WorkingDirectory == folder && setup.CreateNoWindow && setup.RedirectStandardOutput &&
+            setup.ArgumentList.Take(4).SequenceEqual(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]) &&
+            setup.ArgumentList[^1].EndsWith(Cli.InstallCommand, StringComparison.Ordinal),
+            "自动安装使用系统 PowerShell 和同一条官方命令");
+    }
     Check(Cli.ValidatePath($"\"{cli}\"") == cli && Cli.Find(cli) == cli, "带引号的官方路径可识别");
     string? automaticallyDetected = Cli.Find(null);
     if (automaticallyDetected is null)
@@ -132,6 +150,48 @@ await Case("CLI 路径拒绝桌面版并恢复自动检测", () =>
     else
         Check(Cli.Find(desktop) == automaticallyDetected, "已安装时绕过旧版误填路径");
     return Task.CompletedTask;
+});
+
+await Case("安装后沿用旧进程 PATH 也能发现 CLI，PowerShell 保留中文", async () =>
+{
+    var folder = Directory.CreateDirectory(Path.Combine(scratch, "CLI 安装后检测", Guid.NewGuid().ToString("N"))).FullName;
+    var defaultDir = Directory.CreateDirectory(Path.Combine(folder, "agy", "bin")).FullName;
+    var customDir = Directory.CreateDirectory(Path.Combine(folder, "自定义安装位置")).FullName;
+    string stalePath = Path.Combine(folder, "旧 PATH");
+    string? userPath = null;
+    string? RegisteredPath(EnvironmentVariableTarget scope) => scope == EnvironmentVariableTarget.User ? userPath : null;
+
+    Check(Cli.FindInstalledIn(folder, stalePath, RegisteredPath) is null, "安装前没有 CLI");
+    var customExe = Path.Combine(customDir, "agy.exe");
+    File.WriteAllText(customExe, "");
+    userPath = $"\"{customDir}\"";
+    Check(Cli.FindInstalledIn(folder, stalePath, RegisteredPath) == customExe, "重读用户 PATH 找到新安装位置");
+    var defaultExe = Path.Combine(defaultDir, "agy.exe");
+    File.WriteAllText(defaultExe, "");
+    Check(Cli.FindInstalledIn(folder, stalePath, _ => throw new InvalidOperationException()) == defaultExe,
+        "默认安装目录独立于进程或注册表 PATH");
+
+    if (OperatingSystem.IsWindows())
+    {
+        var powershell = Cli.WindowsInstallStartInfo(folder);
+        string encodingSetup = powershell.ArgumentList[^1][..^Cli.InstallCommand.Length];
+        powershell.ArgumentList[^1] = encodingSetup + "Write-Progress '进度记录'; Write-Host '中文进度'; " +
+            "Write-Error '中文安装错误' -ErrorAction Continue; exit 0";
+        var (output, error) = await Cli.ReadOutputAsync(powershell, "安装测试", CancellationToken.None,
+            TimeSpan.FromSeconds(15), showError: true);
+        Check(output == "中文进度" && error.Contains("中文安装错误", StringComparison.Ordinal) &&
+            !error.Contains("CLIXML", StringComparison.Ordinal), "实际 PowerShell 中文双流及纯文本错误");
+        powershell.ArgumentList[^1] = encodingSetup + "Write-Error '中文安装错误'";
+        try
+        {
+            await Cli.ReadOutputAsync(powershell, "安装测试", CancellationToken.None, TimeSpan.FromSeconds(15), showError: true);
+            throw new InvalidOperationException("PowerShell 错误退出未报告。");
+        }
+        catch (IOException failure)
+        {
+            Check(failure.Message.Contains("中文安装错误", StringComparison.Ordinal), "安装失败消息保留中文详情");
+        }
+    }
 });
 
 await Case("草稿与阅读位置跨重启并按项目会话隔离", () =>
@@ -285,6 +345,22 @@ await Case("本轮工具结果合并 ACP 更新及差异", () =>
         rows[0].Details().Contains("第 3 行") && old[0].Status == "in_progress", "补丁不清空未更新字段，浏览快照固定");
     Check(rows[1].Changes is [{ Path: "README.md" }] && rows[1].Details().Contains("https://example.com/report"),
         "同一项展示资源链接和结构化差异");
+    Check(rows[0].ProjectLocations() is [{ Path: "src/a.cs", Line: 3 }] &&
+        rows[1].ProjectLocations() is [{ Path: "README.md", Line: null }], "保留官方行号，差异文件也可定位");
+    Apply("""
+        {"toolCallId":"first","status":"failed","content":[
+          {"type":"content","content":{"type":"text","text":"error: missing file"}},
+          {"type":"content","content":{"type":"image","mimeType":"image/png","data":"iVBORw=="}},
+          {"type":"content","content":{"type":"image","mimeType":"image/png","data":"invalid#"}},
+          {"type":"content","content":{"type":"image","mimeType":"image/svg+xml","data":"PHN2Zy8+"}}
+        ]}
+        """);
+    Apply("""{"toolCallId":"first","rawOutput":null}""");
+    var failures = results.Snapshot().Where(result => result.IsFailure).ToArray();
+    Check(failures is [{ Id: "first" }] && failures[0].Details().Contains("error: missing file") &&
+        !failures[0].Details().Contains("更新说明"), "只筛失败项且其详情不混入其他工具");
+    Check(failures[0].Images is [{ MimeType: "image/png", Length: 4 }] &&
+        !failures[0].Details().Contains("iVBORw=="), "保留可预览的内嵌图片，正文省略二进制");
     Apply("""{"toolCallId":"second","content":[]}""");
     Check(results.Snapshot()[1].Changes.Count == 0, "显式的新内容取代旧内容");
     results.Clear();
@@ -296,6 +372,37 @@ await Case("本轮工具结果合并 ACP 更新及差异", () =>
         using var document = JsonDocument.Parse(json);
         results.Apply(document.RootElement);
     }
+});
+
+await Case("项目文件只读预览和官方行号定位", async () =>
+{
+    var fixture = Directory.CreateDirectory(Path.Combine(scratch, "文件预览")).FullName;
+    var primary = Directory.CreateDirectory(Path.Combine(fixture, "主目录")).FullName;
+    var extra = Directory.CreateDirectory(Path.Combine(fixture, "附加目录")).FullName;
+    var outside = Path.Combine(fixture, "项目外.txt");
+    File.WriteAllText(outside, "项目外文件");
+    var file = Path.Combine(primary, "代码.txt");
+    File.WriteAllText(file, "一行\r\n二行 👋\r\n末行", Encoding.Unicode);
+    string[] workspaces = [primary, extra];
+    var row = await ProjectFilePreview.ReadAsync(new ToolLocation("代码.txt", 2), workspaces);
+    Check(row.FullPath == file && row.ActualLine == 2 && row.Text.Substring(row.Start, row.Length) == "二行 👋",
+        "相对路径以主项目为准，Unicode 和 CRLF 定位正确");
+    var last = await ProjectFilePreview.ReadAsync(new ToolLocation(file, 50), workspaces);
+    Check(last.RequestedLine == 50 && last.ActualLine == 3 && last.Text.Substring(last.Start, last.Length) == "末行",
+        "文件缩短时落在实际最后一行");
+    var otherFile = Path.Combine(extra, "附加文本.txt");
+    File.WriteAllText(otherFile, "");
+    Check((await ProjectFilePreview.ReadAsync(new ToolLocation(otherFile), workspaces)) is { ActualLine: 1, Length: 0 },
+        "附加目录的绝对路径和空文件可读");
+    await ThrowsAsync<IOException>(() => ProjectFilePreview.ReadAsync(new ToolLocation(outside), workspaces));
+    await ThrowsAsync<IOException>(() => ProjectFilePreview.ReadAsync(new ToolLocation(Path.Combine("..", "项目外.txt")), workspaces));
+    await ThrowsAsync<IOException>(() => ProjectFilePreview.ReadAsync(new ToolLocation("https://example.com/a.txt"), workspaces));
+    var binary = Path.Combine(primary, "二进制.dat");
+    File.WriteAllBytes(binary, [0, 1, 2]);
+    await ThrowsAsync<IOException>(() => ProjectFilePreview.ReadAsync(new ToolLocation(binary), workspaces));
+    using (var oversized = File.Create(Path.Combine(primary, "大文件.txt")))
+        oversized.SetLength(ProjectFilePreview.MaxBytes + 1);
+    await ThrowsAsync<IOException>(() => ProjectFilePreview.ReadAsync(new ToolLocation("大文件.txt"), workspaces));
 });
 
 await Case("会话置顶及规则来源范围", () =>
@@ -669,6 +776,52 @@ await Case("Stable/Beta 更新、SHA-256 和失败恢复", async () =>
     Check(await fallback.CheckAsync("beta", "0.1.0", CancellationToken.None) == found,
         "GitHub API 限流时使用同一仓库的公开发布订阅，跳过没有更新清单的标签");
     Check(await fallback.CheckAsync("stable", "0.1.0", CancellationToken.None) is null, "订阅回退保留渠道和版本比较");
+    const string assetsApi = "https://api.github.com/repos/wangz0976-oss/MyAntigravity/releases/assets/";
+    var releaseWithIds = JsonSerializer.Serialize(new[]
+    {
+        new
+        {
+            tag_name = "v0.2.0-beta.1", prerelease = true, assets = new[]
+            {
+                new { id = 401, name = "update-beta.json", browser_download_url = beta + "update-beta.json" },
+                new { id = 402, name = installer, browser_download_url = beta + installer }
+            }
+        }
+    });
+    var fetchedIds = new List<string>();
+    using var limitedAssets = new HttpClient(new FakeHttp(url => url.AbsoluteUri switch
+    {
+        assetsApi + "401" => new StringContent(Manifest("0.2.0-beta.1", "beta", beta)),
+        assetsApi + "402" => new ByteArrayContent(payload),
+        _ => new StringContent(releaseWithIds)
+    }, url => url.AbsoluteUri == beta + "update-beta.json" ? HttpStatusCode.Forbidden
+        : url.AbsoluteUri == beta + installer ? HttpStatusCode.TooManyRequests : HttpStatusCode.OK, request =>
+    {
+        if (request.RequestUri!.AbsoluteUri.StartsWith(assetsApi, StringComparison.Ordinal))
+        {
+            Check(request.Headers.Accept.Single().MediaType == "application/octet-stream" &&
+                request.Headers.Authorization is null, "备用路径只请求公开资产内容");
+            fetchedIds.Add(request.RequestUri.Segments[^1]);
+        }
+    }));
+    var assetUpdate = new Updates(limitedAssets, scratch);
+    var alternate = await assetUpdate.CheckAsync("beta", "0.1.0", CancellationToken.None);
+    Check(alternate?.Version == "0.2.0-beta.1" && Updates.PublicReleasePage(alternate).AbsoluteUri.EndsWith("/tag/v0.2.0-beta.1"),
+        "更新清单直链受限时可读取同一发布的公开资产，手动入口对准目标版本");
+    Check(File.ReadAllBytes(await assetUpdate.DownloadAsync(alternate!, new Progress<int?>(), CancellationToken.None))
+        .SequenceEqual(payload) && fetchedIds.SequenceEqual(["401", "402"]), "安装包直链受限时仍校验备用下载的 SHA-256");
+
+    using var feedBlocked = new HttpClient(new FakeHttp(_ => new StringContent("blocked"), _ => HttpStatusCode.Forbidden));
+    try
+    {
+        await new Updates(feedBlocked, scratch).CheckAsync("beta", "0.1.0", CancellationToken.None);
+        throw new InvalidOperationException("访问受限的检查未报告失败。");
+    }
+    catch (HttpRequestException error)
+    {
+        Check(error.StatusCode == HttpStatusCode.Forbidden && error.Message.Contains("读取备用发布订阅") &&
+            error.Message.Contains("Alt+O"), "排除两条查找路径后告知失败步骤和手动下载入口");
+    }
     Check(await updater.CheckAsync("stable", "0.1.0", CancellationToken.None) is null, "防止降级");
     var path = await updater.DownloadAsync(found!, new Progress<int?>(), CancellationToken.None);
     Check(File.ReadAllBytes(path).SequenceEqual(payload), "校验后的下载落盘");
@@ -1012,9 +1165,13 @@ static async Task ThrowsAsync<T>(Func<Task> test) where T : Exception
 static string Value(JsonElement element, string key) => element.TryGetProperty(key, out var field)
     ? field.GetString() ?? "" : "";
 
-sealed class FakeHttp(Func<Uri, HttpContent> get, Func<Uri, HttpStatusCode>? status = null) : HttpMessageHandler
+sealed class FakeHttp(Func<Uri, HttpContent> get, Func<Uri, HttpStatusCode>? status = null,
+    Action<HttpRequestMessage>? observe = null) : HttpMessageHandler
 {
-    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-        Task.FromResult(new HttpResponseMessage(status?.Invoke(request.RequestUri!) ?? HttpStatusCode.OK)
-            { Content = get(request.RequestUri!) });
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        observe?.Invoke(request);
+        return Task.FromResult(new HttpResponseMessage(status?.Invoke(request.RequestUri!) ?? HttpStatusCode.OK)
+            { Content = get(request.RequestUri!), RequestMessage = request });
+    }
 }

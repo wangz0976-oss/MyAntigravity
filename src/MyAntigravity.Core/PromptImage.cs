@@ -13,7 +13,7 @@ public sealed class PromptImage
 
     public PromptImage(string mimeType, ReadOnlySpan<byte> bytes)
     {
-        if (mimeType is not ("image/png" or "image/jpeg" or "image/gif" or "image/bmp" or "image/tiff"))
+        if (!IsSupportedMimeType(mimeType))
             throw new ArgumentException("不支持此图片格式。", nameof(mimeType));
         if (bytes.Length is 0 or > MaxFileBytes)
             throw new ArgumentException("图片大小须大于零且不超过 8 MiB。", nameof(bytes));
@@ -22,4 +22,7 @@ public sealed class PromptImage
     }
 
     public Stream OpenRead() => new MemoryStream(content, writable: false);
+
+    internal static bool IsSupportedMimeType(string mimeType) =>
+        mimeType is "image/png" or "image/jpeg" or "image/gif" or "image/bmp" or "image/tiff";
 }

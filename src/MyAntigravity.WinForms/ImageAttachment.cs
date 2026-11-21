@@ -2,12 +2,13 @@ using System.Drawing.Imaging;
 
 namespace MyAntigravity;
 
-internal sealed record ImageAttachment(string Path, PromptImage Payload, int Width, int Height)
+internal sealed record ImageAttachment(string Path, PromptImage Payload, int Width, int Height, bool IsToolResult = false)
 {
     internal string Name => AgentText.Visible(System.IO.Path.GetFileName(Path));
 
     internal string Details =>
-        $"文件名：{Name}\n尺寸：{Width} × {Height} 像素\n格式：{Payload.MimeType}\n大小：{Payload.Length:N0} 字节\n位置：{AgentText.Visible(Path)}";
+        $"文件名：{Name}\n尺寸：{Width} × {Height} 像素\n格式：{Payload.MimeType}\n大小：{Payload.Length:N0} 字节\n" +
+        (IsToolResult ? "来源：官方 ACP 工具结果" : $"位置：{AgentText.Visible(Path)}");
 
     public override string ToString() => $"{Name}，{Width} × {Height} 像素，{Payload.Length:N0} 字节";
 
@@ -25,17 +26,30 @@ internal sealed record ImageAttachment(string Path, PromptImage Payload, int Wid
         token.ThrowIfCancellationRequested();
         using var stream = new MemoryStream(bytes, writable: false);
         using var image = Decode(stream);
+        var format = InspectImage(image);
+        return new ImageAttachment(path, new PromptImage(format, bytes), image.Width, image.Height);
+    }
+
+    internal static ImageAttachment FromToolResult(string name, PromptImage payload)
+    {
+        using var stream = payload.OpenRead();
+        using var image = Decode(stream);
+        if (InspectImage(image) != payload.MimeType)
+            throw new IOException("工具返回的图片格式和数据不一致。");
+        return new ImageAttachment(name, payload, image.Width, image.Height, IsToolResult: true);
+    }
+
+    private static string InspectImage(Image image)
+    {
+        if (image.Width <= 0 || image.Height <= 0 || (long)image.Width * image.Height > 40_000_000)
+            throw new IOException("图片尺寸超出 4000 万像素的预览限制。");
         var kind = image.RawFormat.Guid;
-        var mime = kind == ImageFormat.Png.Guid ? "image/png"
+        return kind == ImageFormat.Png.Guid ? "image/png"
             : kind == ImageFormat.Jpeg.Guid ? "image/jpeg"
             : kind == ImageFormat.Gif.Guid ? "image/gif"
             : kind == ImageFormat.Bmp.Guid ? "image/bmp"
             : kind == ImageFormat.Tiff.Guid ? "image/tiff"
             : throw new IOException("请选择 PNG、JPEG、GIF、BMP 或 TIFF 图片。");
-        if (image.Width <= 0 || image.Height <= 0 || (long)image.Width * image.Height > 40_000_000)
-            throw new IOException("图片尺寸超出 4000 万像素的预览限制。");
-
-        return new ImageAttachment(path, new PromptImage(mime, bytes), image.Width, image.Height);
     }
 
     internal Bitmap Preview()

@@ -157,7 +157,7 @@ internal static partial class Dialogs
 
     private static void ImagePreview(Form owner, ImageAttachment image)
     {
-        using var form = Window("查看图片附件", new Size(780, 540));
+        using var form = Window(image.IsToolResult ? "查看工具结果图片" : "查看图片附件", new Size(780, 540));
         form.ShowInTaskbar = true;
         var info = MainForm.ReadableText("图片文件信息");
         info.Text = image.Details;

@@ -2,7 +2,7 @@
 param(
     [string]$DotNet = 'dotnet',
     [string]$Iscc = '',
-    [string]$Notes = 'MyAntigravity 本地 Windows 预览。',
+    [string]$Notes = '',
     [uri]$GitCodeDownloadUrl
 )
 
@@ -54,6 +54,17 @@ $Iscc = (Resolve-Path -LiteralPath $Iscc).Path
 $version = [string]$props.Project.PropertyGroup.Version
 if ($version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$') {
     throw 'Directory.Build.props must contain a semantic version.'
+}
+if ([string]::IsNullOrWhiteSpace($Notes)) {
+    $entry = '## ' + $version
+    $inside = $false
+    $lines = foreach ($line in Get-Content -Encoding UTF8 -LiteralPath (Join-Path $root 'CHANGELOG.md')) {
+        if ($inside -and $line.StartsWith('## ', [StringComparison]::Ordinal)) { break }
+        if ($line.TrimEnd() -ceq $entry) { $inside = $true; continue }
+        if ($inside) { $line }
+    }
+    $Notes = ($lines -join [char]10).Trim()
+    if (!$Notes) { throw "CHANGELOG.md needs a non-empty ## $version section for this release." }
 }
 $channel = if ($version.Contains('-')) { 'beta' } else { 'stable' }
 if ($GitCodeDownloadUrl -and (!$GitCodeDownloadUrl.IsAbsoluteUri -or $GitCodeDownloadUrl.Scheme -ne 'https' -or

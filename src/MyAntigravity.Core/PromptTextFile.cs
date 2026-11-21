@@ -48,7 +48,7 @@ public sealed class PromptTextFile
         return attachment;
     }
 
-    private static string Decode(ReadOnlySpan<byte> contents)
+    internal static string Decode(ReadOnlySpan<byte> contents)
     {
         try
         {

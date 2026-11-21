@@ -67,6 +67,8 @@ internal sealed partial class MainForm
 
         var download = new Button { Text = "更新 (&D)", AutoSize = true, Enabled = startup };
         var check = new Button { Text = "检查更新 (&K)", AutoSize = true, Visible = !startup };
+        var browser = new Button { Text = "打开 GitHub 发布页 (&O)", AutoSize = true };
+        browser.Click += (_, _) => OpenLink(Updates.PublicReleasePage(manifest));
         var close = new Button
         {
             Text = startup ? "稍后 (&C)" : "关闭 (&C)", AutoSize = true, DialogResult = DialogResult.Cancel
@@ -74,7 +76,7 @@ internal sealed partial class MainForm
         window.FormClosing += (_, _) => cancellation.Cancel();
         window.CancelButton = close;
         window.AcceptButton = startup ? download : check;
-        Dialogs.Vertical(window, layout, Buttons(1, download, check, close));
+        Dialogs.Vertical(window, layout, Buttons(1, download, check, browser, close));
         window.ActiveControl = startup ? details : check;
         window.Shown += (_, _) => window.ActiveControl?.Focus();
         DisplayNotes();

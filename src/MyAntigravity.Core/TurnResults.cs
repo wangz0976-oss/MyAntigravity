@@ -2,12 +2,23 @@ using System.Text.Json;
 
 namespace MyAntigravity;
 
-public sealed record TurnToolResult(string Id, string Title, string Kind, string Status, string? Output,
-    IReadOnlyList<string> Content, IReadOnlyList<string> Locations, IReadOnlyList<FileChange> Changes)
+public sealed record ToolLocation(string Path, uint? Line = null)
 {
+    public override string ToString() => AgentText.Visible(Line is { } line ? $"{Path}，第 {line} 行" : Path);
+}
+
+public sealed record TurnToolResult(string Id, string Title, string Kind, string Status, string? Output,
+    IReadOnlyList<string> Content, IReadOnlyList<ToolLocation> Locations, IReadOnlyList<FileChange> Changes,
+    IReadOnlyList<PromptImage> Images)
+{
+    public bool IsFailure => Status == "failed";
     public string Summary => $"{AcpDisplayText.ToolStatus(Status)} · {AcpDisplayText.ToolKind(Kind)}";
 
     public override string ToString() => $"{AgentText.Visible(Title)} · {AgentText.Visible(Summary)}";
+
+    public IReadOnlyList<ToolLocation> ProjectLocations() => Locations.Concat(Changes
+        .Where(change => !Locations.Any(location => LocalSettings.PathEquals(location.Path, change.Path)))
+        .Select(change => new ToolLocation(change.Path))).Distinct().ToArray();
 
     public string Details()
     {
@@ -28,8 +39,13 @@ public sealed record TurnToolResult(string Id, string Title, string Kind, string
 public sealed class TurnResults
 {
     private readonly Dictionary<string, TurnToolResult> tools = new(StringComparer.Ordinal);
+    private int imageBytes;
 
-    public void Clear() => tools.Clear();
+    public void Clear()
+    {
+        tools.Clear();
+        imageBytes = 0;
+    }
 
     public IReadOnlyList<TurnToolResult> Snapshot() => tools.Values.ToArray();
 
@@ -41,6 +57,13 @@ public sealed class TurnResults
         var progress = update.Field("content");
         var locations = update.Field("locations");
         var output = update.Field("rawOutput");
+        var images = previous?.Images ?? [];
+        if (progress.ValueKind == JsonValueKind.Array)
+        {
+            imageBytes -= images.Sum(image => image.Length);
+            images = ReadImages(progress, PromptImage.MaxPromptBytes - imageBytes);
+            imageBytes += images.Sum(image => image.Length);
+        }
         tools[id] = new TurnToolResult(id, update.Text("title") ?? previous?.Title ?? "工具操作",
             update.Text("kind") ?? previous?.Kind ?? "other", update.Text("status") ?? previous?.Status ?? "pending",
             output.ValueKind switch
@@ -51,7 +74,8 @@ public sealed class TurnResults
             },
             progress.ValueKind == JsonValueKind.Array ? ReadContent(progress).ToArray() : previous?.Content ?? [],
             locations.ValueKind == JsonValueKind.Array ? ReadLocations(locations).ToArray() : previous?.Locations ?? [],
-            progress.ValueKind == JsonValueKind.Array ? AgentText.Changes(update).ToArray() : previous?.Changes ?? []);
+            progress.ValueKind == JsonValueKind.Array ? AgentText.Changes(update).ToArray() : previous?.Changes ?? [],
+            images);
     }
 
     private static IEnumerable<string> ReadContent(JsonElement progress)
@@ -79,15 +103,37 @@ public sealed class TurnResults
         }
     }
 
-    private static IEnumerable<string> ReadLocations(JsonElement locations)
+    private static IReadOnlyList<PromptImage> ReadImages(JsonElement progress, int remaining)
+    {
+        var images = new List<PromptImage>();
+        foreach (var entry in progress.Items())
+        {
+            if (images.Count >= PromptImage.MaxCount || remaining <= 0)
+                break;
+            var content = entry.Field("content");
+            var data = content.Field("data");
+            int limit = Math.Min(remaining, PromptImage.MaxFileBytes);
+            if (content.Text("type") != "image" || content.Text("mimeType") is not { } mime ||
+                !PromptImage.IsSupportedMimeType(mime) || data.ValueKind != JsonValueKind.String ||
+                (data.GetString()?.Length ?? 0) > ((limit + 2) / 3) * 4 ||
+                !data.TryGetBytesFromBase64(out var bytes) || bytes.Length == 0 || bytes.Length > limit)
+                continue;
+            images.Add(new PromptImage(mime, bytes));
+            remaining -= bytes.Length;
+        }
+        return images;
+    }
+
+    private static IEnumerable<ToolLocation> ReadLocations(JsonElement locations)
     {
         foreach (var item in locations.Items())
         {
             if (item.Text("path") is { Length: > 0 } path)
             {
                 var reported = item.Field("line");
-                yield return reported.ValueKind == JsonValueKind.Number && reported.TryGetUInt32(out var line) && line > 0
-                    ? $"{path}，第 {line} 行" : path;
+                yield return new ToolLocation(path,
+                    reported.ValueKind == JsonValueKind.Number && reported.TryGetUInt32(out var line) && line > 0
+                        ? line : null);
             }
         }
     }

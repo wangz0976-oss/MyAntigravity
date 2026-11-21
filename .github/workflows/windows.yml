@@ -55,5 +55,6 @@ jobs:
           path: |
             dist/MyAntigravity-Setup.exe
             dist/update-*.json
+            dist/app/
           if-no-files-found: error
           retention-days: 7

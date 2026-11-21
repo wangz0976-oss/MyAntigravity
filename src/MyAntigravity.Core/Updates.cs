@@ -58,6 +58,8 @@ public sealed partial record ReleaseVersion(int Major, int Minor, int Patch, str
 
 public sealed record UpdateManifest(string Version, string Channel, Uri DownloadUrl, string Sha256, string Notes)
 {
+    internal long? InstallerAssetId { get; init; }
+
     public static UpdateManifest Parse(string json, string expectedChannel)
     {
         using var document = JsonDocument.Parse(json);
@@ -80,23 +82,27 @@ public sealed class Updates(HttpClient http, string dataDirectory)
 {
     private const string Project = "wangz0976-oss/MyAntigravity";
     private const string ReleasePage = "https://github.com/" + Project + "/releases";
+    private const string ReleaseApi = "https://api.github.com/repos/" + Project + "/releases";
+
+    public static Uri PublicReleasePage(UpdateManifest? manifest = null) => new(manifest is null
+        ? ReleasePage : $"{ReleasePage}/tag/v{Uri.EscapeDataString(manifest.Version)}");
 
     public async Task<UpdateManifest?> CheckAsync(string channel, string current, CancellationToken cancellation)
     {
         if (channel is not ("stable" or "beta"))
             throw new ArgumentException("无效的更新渠道。", nameof(channel));
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"https://api.github.com/repos/{Project}/releases?per_page=100");
+        using var request = new HttpRequestMessage(HttpMethod.Get, ReleaseApi + "?per_page=100");
         request.Headers.UserAgent.Add(new ProductInfoHeaderValue("MyAntigravity", "0.1"));
         using var response = await http.SendAsync(request, cancellation).ConfigureAwait(false);
         var installed = ReleaseVersion.Parse(current);
-        if (response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.TooManyRequests)
+        if (IsRestricted(response.StatusCode))
             return await CheckFeedAsync(channel, installed, cancellation).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.NotFound)
             throw new InvalidOperationException("GitHub 更新通道尚未公开。");
-        response.EnsureSuccessStatusCode();
+        EnsureUpdateResponse(response, "读取发布列表");
         using var releases = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellation).ConfigureAwait(false));
-        var candidates = new List<(ReleaseVersion Version, Uri Manifest, string Installer)>();
+        var candidates = new List<(ReleaseVersion Version, Uri Manifest, string Installer, long? ManifestId, long? InstallerId)>();
         foreach (var release in releases.RootElement.Items())
         {
             var tag = release.Text("tag_name") ?? "";
@@ -116,22 +122,26 @@ public sealed class Updates(HttpClient http, string dataDirectory)
                 manifest.Text("browser_download_url") == prefix + $"update-{channel}.json" &&
                 installer.Text("browser_download_url") == prefix + "MyAntigravity-Setup.exe")
                 candidates.Add((version, new Uri(prefix + $"update-{channel}.json"),
-                    prefix + "MyAntigravity-Setup.exe"));
+                    prefix + "MyAntigravity-Setup.exe", AssetId(manifest), AssetId(installer)));
         }
 
         var best = candidates.OrderByDescending(item => item.Version).FirstOrDefault();
         if (best.Version is null)
             return null;
 
-        var manifestText = await http.GetStringAsync(best.Manifest, cancellation).ConfigureAwait(false);
-        return ValidateManifest(manifestText, channel, best.Version, best.Installer);
+        using var manifestResponse = await GetAssetAsync(best.Manifest, best.ManifestId, cancellation).ConfigureAwait(false);
+        EnsureUpdateResponse(manifestResponse, "下载更新清单");
+        var manifestText = await manifestResponse.Content.ReadAsStringAsync(cancellation).ConfigureAwait(false);
+        return ValidateManifest(manifestText, channel, best.Version, best.Installer) with { InstallerAssetId = best.InstallerId };
     }
 
     private async Task<UpdateManifest?> CheckFeedAsync(string channel, ReleaseVersion installed,
         CancellationToken cancellation)
     {
         const string tagPrefix = ReleasePage + "/tag/v";
-        var text = await http.GetStringAsync(ReleasePage + ".atom", cancellation).ConfigureAwait(false);
+        using var feedResponse = await http.GetAsync(ReleasePage + ".atom", cancellation).ConfigureAwait(false);
+        EnsureUpdateResponse(feedResponse, "读取备用发布订阅");
+        var text = await feedResponse.Content.ReadAsStringAsync(cancellation).ConfigureAwait(false);
         var feed = XDocument.Parse(text);
         XNamespace atom = "http://www.w3.org/2005/Atom";
         var candidates = new HashSet<ReleaseVersion>();
@@ -153,11 +163,58 @@ public sealed class Updates(HttpClient http, string dataDirectory)
             using var response = await http.GetAsync(prefix + $"update-{channel}.json", cancellation).ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.NotFound)
                 continue;
-            response.EnsureSuccessStatusCode();
+            EnsureUpdateResponse(response, "下载更新清单");
             var manifestText = await response.Content.ReadAsStringAsync(cancellation).ConfigureAwait(false);
             return ValidateManifest(manifestText, channel, version, prefix + "MyAntigravity-Setup.exe");
         }
         return null;
+    }
+
+    private static long? AssetId(JsonElement asset) =>
+        asset.Field("id") is { ValueKind: JsonValueKind.Number } id && id.TryGetInt64(out var value) && value > 0
+            ? value : null;
+
+    private static bool IsRestricted(HttpStatusCode status) =>
+        status is HttpStatusCode.Forbidden or HttpStatusCode.TooManyRequests;
+
+    private static void EnsureUpdateResponse(HttpResponseMessage response, string step)
+    {
+        if (response.IsSuccessStatusCode)
+            return;
+        var status = response.StatusCode;
+        var description = IsRestricted(status) ? "GitHub 访问暂时受限" : "GitHub 请求失败";
+        throw new HttpRequestException($"{step}时{description}（HTTP {(int)status}）。可按 Alt+O 打开 GitHub 发布页手动下载。",
+            null, status);
+    }
+
+    private async Task<HttpResponseMessage> GetAssetAsync(Uri address, long? assetId, CancellationToken cancellation)
+    {
+        var direct = await http.GetAsync(address, HttpCompletionOption.ResponseHeadersRead, cancellation).ConfigureAwait(false);
+        if (assetId is null || !IsRestricted(direct.StatusCode))
+            return direct;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{ReleaseApi}/assets/{assetId}");
+            request.Headers.UserAgent.Add(new ProductInfoHeaderValue("MyAntigravity", "0.1"));
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/octet-stream"));
+            var alternate = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellation).ConfigureAwait(false);
+            var metadata = alternate.RequestMessage?.RequestUri?.Host == "api.github.com" &&
+                alternate.Content.Headers.ContentType?.MediaType is "application/json" or "application/vnd.github+json";
+            if (alternate.IsSuccessStatusCode && !metadata)
+            {
+                direct.Dispose();
+                return alternate;
+            }
+            alternate.Dispose();
+        }
+        catch (HttpRequestException) when (!cancellation.IsCancellationRequested) { }
+        catch
+        {
+            direct.Dispose();
+            throw;
+        }
+        return direct;
     }
 
     private static UpdateManifest ValidateManifest(string text, string channel, ReleaseVersion version, string installer)
@@ -176,9 +233,9 @@ public sealed class Updates(HttpClient http, string dataDirectory)
         var temporary = Path.Combine(directory, $".download-{Guid.NewGuid():N}.tmp");
         try
         {
-            using var response = await http.GetAsync(manifest.DownloadUrl, HttpCompletionOption.ResponseHeadersRead,
-                cancellation).ConfigureAwait(false);
-            response.EnsureSuccessStatusCode();
+            using var response = await GetAssetAsync(manifest.DownloadUrl, manifest.InstallerAssetId, cancellation)
+                .ConfigureAwait(false);
+            EnsureUpdateResponse(response, "下载安装包");
             var size = response.Content.Headers.ContentLength;
             await using var source = await response.Content.ReadAsStreamAsync(cancellation).ConfigureAwait(false);
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);

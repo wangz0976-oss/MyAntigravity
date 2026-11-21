@@ -8,6 +8,7 @@ internal sealed partial class MainForm
     {
         string? activeSession = sessionId;
         string? selectedId = null;
+        var failures = new Dialogs.BrowseFilter<TurnToolResult>("只看失败工具 (&F)", result => result.IsFailure);
         while (!closing && sessionId == activeSession)
         {
             var entries = turnResults.Snapshot();
@@ -19,12 +20,12 @@ internal sealed partial class MainForm
             var selected = Dialogs.Browse(this, "本轮结果", "按工具名称、状态或文件路径筛选", "本轮工具结果",
                 "查看结果详情 (&V)", entries, entry => $"{entry} {string.Join(" ", entry.Locations)} " +
                     string.Join(" ", entry.Changes.Select(change => change.Path)), entry => entry.ToString(),
-                initial: entries.FirstOrDefault(entry => entry.Id == selectedId)).Item;
+                initial: entries.FirstOrDefault(entry => entry.Id == selectedId), filter: failures).Item;
             if (selected is null)
                 break;
             selectedId = selected.Id;
             Dialogs.ReadMessage(this, $"工具结果 - {AgentText.Visible(selected.Title)}", selected.Details(),
-                readLatest: null, reviewChanges: selected.Changes);
+                readLatest: null, toolResult: selected, workspaces: ExtensionWorkspaces());
         }
         return Task.CompletedTask;
     }

@@ -109,6 +109,8 @@ internal sealed partial class MainForm : Form
         var preferencesMenu = Item("设置 (&S)");
         preferencesMenu.DropDownItems.AddRange([settingsMenu, extensionHub, updatesMenu]);
         var help = Item("帮助 (&H)");
+        help.DropDownItems.Add(Item("查看说明 (&M)", action: ShowUserGuideAsync));
+        help.DropDownItems.Add(Item("查看更新日志 (&U)", action: ShowCurrentChangelogAsync));
         help.DropDownItems.Add(Item("键盘操作 (&K)", action: () =>
         {
             Dialogs.Text(this, "键盘操作", """

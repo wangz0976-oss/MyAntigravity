@@ -2,26 +2,37 @@ namespace MyAntigravity;
 
 internal static partial class Dialogs
 {
+    internal sealed record BrowseFilter<T>(string Label, Func<T, bool> Matches)
+    {
+        internal bool Active { get; set; }
+        internal string Query { get; set; } = "";
+    }
+
     internal static T? Search<T>(Form owner, string title, string searchName, string listName, string acceptText,
         IReadOnlyList<T> entries, Func<T, string> searchText, Func<T, string>? describe = null) where T : class
         => Browse(owner, title, searchName, listName, acceptText, entries, searchText, describe).Item;
 
     internal static (T? Item, bool Remove) Browse<T>(Form owner, string title, string searchName, string listName,
         string acceptText, IReadOnlyList<T> entries, Func<T, string> searchText, Func<T, string>? describe = null,
-        string? removeText = null, T? initial = null) where T : class
+        string? removeText = null, T? initial = null, BrowseFilter<T>? filter = null) where T : class
     {
         using var form = Window(title, new Size(760, 510));
         form.ShowInTaskbar = true;
         form.KeyPreview = true;
         var query = new TextBox
         {
-            AccessibleName = searchName, Dock = DockStyle.Top, TabIndex = 0,
+            AccessibleName = searchName, Dock = DockStyle.Top, TabIndex = 0, Text = filter?.Query ?? "",
             AccessibleDescription = "输入关键词筛选。按向下键或 Tab 到结果列表。"
         };
+        var toggle = filter is null ? null : new CheckBox
+        {
+            Text = filter.Label, Checked = filter.Active, AutoSize = true, TabIndex = 1
+        };
+        int filterRows = toggle is null ? 0 : 1;
         var matches = new ListBox
         {
             AccessibleName = listName, Dock = DockStyle.Fill, IntegralHeight = false, HorizontalScrollbar = true,
-            TabIndex = 1, AccessibleDescription = "用方向键选择，按回车确认。Ctrl 加 F 筛选。"
+            TabIndex = 1 + filterRows, AccessibleDescription = "用方向键选择，按回车确认。Ctrl 加 F 筛选。"
         };
         var count = MainForm.Caption("");
         var accept = new Button { Text = acceptText, AutoSize = true, DialogResult = DialogResult.OK };
@@ -35,24 +46,32 @@ internal static partial class Dialogs
             matches.AccessibleDescription += " Delete 打开移除确认。";
         }
         buttons.Add(close);
-        var panel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = describe is null ? 4 : 6 };
+        var panel = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = (describe is null ? 4 : 6) + filterRows
+        };
         panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        if (toggle is not null)
+        {
+            panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            panel.Controls.Add(toggle, 0, 2);
+        }
         panel.RowStyles.Add(new RowStyle(SizeType.Percent, describe is null ? 100 : 62));
         panel.Controls.Add(MainForm.Caption(searchName), 0, 0);
         panel.Controls.Add(query, 0, 1);
-        panel.Controls.Add(count, 0, 2);
-        panel.Controls.Add(matches, 0, 3);
+        panel.Controls.Add(count, 0, 2 + filterRows);
+        panel.Controls.Add(matches, 0, 3 + filterRows);
         RichTextBox? details = null;
         if (describe is not null)
         {
             details = MainForm.ReadableText("所选结果详情");
-            details.TabIndex = 2;
+            details.TabIndex = 2 + filterRows;
             panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             panel.RowStyles.Add(new RowStyle(SizeType.Percent, 38));
-            panel.Controls.Add(MainForm.Caption("所选结果详情"), 0, 4);
-            panel.Controls.Add(details, 0, 5);
+            panel.Controls.Add(MainForm.Caption("所选结果详情"), 0, 4 + filterRows);
+            panel.Controls.Add(details, 0, 5 + filterRows);
         }
 
         void SelectionChanged()
@@ -71,7 +90,7 @@ internal static partial class Dialogs
         void Refresh(object? previous)
         {
             var terms = query.Text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-            var results = entries.Where(item => terms.All(term =>
+            var results = entries.Where(item => (filter is not { Active: true } || filter.Matches(item)) && terms.All(term =>
                 searchText(item).Contains(term, StringComparison.OrdinalIgnoreCase))).ToArray();
             matches.BeginUpdate();
             try
@@ -88,7 +107,20 @@ internal static partial class Dialogs
             SelectionChanged();
         }
 
-        query.TextChanged += (_, _) => Refresh(matches.SelectedItem);
+        query.TextChanged += (_, _) =>
+        {
+            if (filter is not null)
+                filter.Query = query.Text;
+            Refresh(matches.SelectedItem);
+        };
+        if (toggle is not null && filter is not null)
+        {
+            toggle.CheckedChanged += (_, _) =>
+            {
+                filter.Active = toggle.Checked;
+                Refresh(matches.SelectedItem);
+            };
+        }
         query.KeyDown += (_, e) =>
         {
             if (e.KeyCode != Keys.Down || matches.Items.Count == 0)

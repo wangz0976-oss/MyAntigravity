@@ -63,7 +63,10 @@ internal sealed partial class MainForm : Form
                 projects.Focus();
             else
                 addProject.Focus();
-            await CheckStartupUpdateAsync(new Updates(updateHttp, dataDirectory), Program.Version);
+            if (!closing && loadError is null)
+                OfferCliSetupAtStartup();
+            if (!closing)
+                await CheckStartupUpdateAsync(new Updates(updateHttp, dataDirectory), Program.Version);
         };
     }
 
