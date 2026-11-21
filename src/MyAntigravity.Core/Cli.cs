@@ -132,6 +132,24 @@ public static class Cli
             showError: true).ConfigureAwait(false);
     }
 
+    public static Task EnsureWindowsInstalledAsync(string cwd, CancellationToken cancellation) =>
+        EnsureInstalledAsync(() => Find(null), () => InstallWindowsAsync(cwd, cancellation),
+            executable => VersionAsync(executable, cwd));
+
+    internal static async Task EnsureInstalledAsync(Func<string?> find, Func<Task> install,
+        Func<string, Task<string>> readVersion)
+    {
+        var executable = find();
+        if (executable is null)
+        {
+            await install().ConfigureAwait(false);
+            executable = find() ?? throw new IOException("官方安装命令已退出，但仍未找到 agy.exe。");
+        }
+        var version = await readVersion(executable).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(version) || version == "版本未报告")
+            throw new IOException("已找到 agy.exe，但无法读取 CLI 版本。");
+    }
+
     public static async Task<string> VersionAsync(string executable, string cwd)
     {
         var (output, error) = await ReadOutputAsync(executable, cwd, "CLI 版本检查", "--version").ConfigureAwait(false);

@@ -102,6 +102,8 @@ await Case("更新日志转换为读屏纯文本", () =>
     string beta18 = UpdateNotes.ForVersion(changelog, "0.1.0-beta.18");
     Check(beta18.Contains("Ctrl+G") && beta18.Contains("Alt+F") && beta18.Contains("Alt+A") &&
         !beta18.Contains("跨项目查找会话"), "新版更新窗显示目标版本的操作入口和修复");
+    string beta19 = UpdateNotes.ForVersion(changelog, "0.1.0-beta.19");
+    Check(beta19.Contains("创建桌面快捷方式") && beta19.Contains("检测 CLI 版本"), "安装修复有独立的目标版本日志");
     return Task.CompletedTask;
 });
 
@@ -191,6 +193,45 @@ await Case("安装后沿用旧进程 PATH 也能发现 CLI，PowerShell 保留�
         {
             Check(failure.Message.Contains("中文安装错误", StringComparison.Ordinal), "安装失败消息保留中文详情");
         }
+    }
+});
+
+await Case("安装向导重用已装的 CLI，验证首次安装并保留失败原因", async () =>
+{
+    const string path = "test-agy.exe";
+    string? available = path;
+    int installs = 0;
+    Task Install()
+    {
+        installs++;
+        available = path;
+        return Task.CompletedTask;
+    }
+
+    string? checkedPath = null;
+    Task<string> Version(string executable)
+    {
+        checkedPath = executable;
+        return Task.FromResult("1.5.14");
+    }
+
+    await Cli.EnsureInstalledAsync(() => available, Install, Version);
+    Check(installs == 0 && checkedPath == path, "已有 CLI 只核验版本");
+    available = checkedPath = null;
+    await Cli.EnsureInstalledAsync(() => available, Install, Version);
+    Check(installs == 1 && checkedPath == path, "安装后重新检测并核验版本");
+
+    await ThrowsAsync<IOException>(() => Cli.EnsureInstalledAsync(() => null, () => Task.CompletedTask, Version));
+    await ThrowsAsync<IOException>(() => Cli.EnsureInstalledAsync(() => available, Install,
+        _ => Task.FromResult("版本未报告")));
+    try
+    {
+        await Cli.EnsureInstalledAsync(() => null, () => Task.FromException(new IOException("示例安装失败")), Version);
+        throw new InvalidOperationException("CLI 安装失败被忽略。");
+    }
+    catch (IOException failure)
+    {
+        Check(failure.Message == "示例安装失败", "把官方安装异常原样传到调用端");
     }
 });
 

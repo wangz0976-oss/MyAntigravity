@@ -8,7 +8,7 @@
 
 “帮助 → 查看说明”可离线按章节阅读操作手册。“帮助 → 查看更新日志”可回看当前安装版本的改动、菜单和按键。
 
-1. 打开 `dist\app\MyAntigravity.exe`。也可以运行 `dist\MyAntigravity-Setup.exe`。首次默认安装到 `%LOCALAPPDATA%\MyAntigravity`，简体中文安装向导可另选路径。当前产物是 Windows x64 版，自带 .NET 运行时。
+1. 打开 `dist\app\MyAntigravity.exe`。也可以运行 `dist\MyAntigravity-Setup.exe`。首次默认安装到 `%LOCALAPPDATA%\MyAntigravity`，简体中文安装向导可另选路径。“选择附加任务”页可用方向键和空格选择桌面快捷方式、开始菜单快捷方式或安装官方 CLI。当前产物是 Windows x64 版，自带 .NET 运行时。
 2. 启动时缺少 CLI 会打开提示窗口。按 **Alt+A** 可以运行 Google 官方 PowerShell 安装命令，完成后自动检测版本。也可以按 **Alt+P** 复制命令手动执行。需要再次检测时，选择“账户 → 检测 CLI 版本”。自定义位置可在“设置 → 常规设置”选取 `agy.exe`。安装命令和默认路径也见 [Google 官方 Windows CLI 安装指南](https://antigravity.google/docs/getting-started?tab=cli)。
 3. 使用“账户 → 用浏览器登录 Google”，在 Google 页面完成授权后返回。已有官方 CLI 登录状态会自动复用，可以直接新建会话。需要终端授权时选“用官方终端登录”，它运行官方命令 `agy acp --login`。
 4. 按 **Ctrl+O**，输入完整项目路径并按回车。也可以在对话框选“浏览文件夹”。按 **Ctrl+N** 新建会话。输入消息，用 **Ctrl+Enter** 发送。回车换行。**Ctrl+M** 打开当前会话的模型、权限模式和推理等级。权限模式有中文说明，模型名沿用官方原名。用方向键选配置项，按 Tab 到可选值，再按一次 Tab 查看说明。

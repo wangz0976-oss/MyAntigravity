@@ -22,8 +22,11 @@ internal static class Program
     }
 
     [STAThread]
-    private static void Main()
+    private static int Main(string[] args)
     {
+        if (args is ["--setup-cli", var reportPath])
+            return SetupCli(reportPath);
+
         ApplicationConfiguration.Initialize();
         using var mutex = new Mutex(true, @"Local\MyAntigravity-" +
             Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
@@ -32,7 +35,7 @@ internal static class Program
         {
             MessageBox.Show("此目录下的 MyAntigravity 已打开。", "MyAntigravity",
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
+            return 0;
         }
         try
         {
@@ -42,6 +45,33 @@ internal static class Program
         finally
         {
             mutex.ReleaseMutex();
+        }
+        return 0;
+    }
+
+    private static int SetupCli(string reportPath)
+    {
+        if (!Path.IsPathFullyQualified(reportPath))
+            return 2;
+        try
+        {
+            Cli.EnsureWindowsInstalledAsync(AppContext.BaseDirectory, CancellationToken.None).GetAwaiter().GetResult();
+            return 0;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or TimeoutException or
+            System.ComponentModel.Win32Exception or InvalidOperationException or ArgumentException)
+        {
+            try
+            {
+                using var report = new FileStream(reportPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                using var writer = new StreamWriter(report);
+                writer.WriteLine(AgentText.Visible(error.Message));
+            }
+            catch (Exception writeError) when (writeError is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                return 2;
+            }
+            return 1;
         }
     }
 }
