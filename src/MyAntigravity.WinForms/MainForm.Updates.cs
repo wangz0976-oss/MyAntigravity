@@ -185,5 +185,5 @@ internal sealed partial class MainForm
     private static bool IsUpdateError(Exception error) =>
         error is IOException or HttpRequestException or InvalidOperationException or UnauthorizedAccessException
             or FormatException or System.Text.Json.JsonException or System.ComponentModel.Win32Exception
-            or OperationCanceledException or ArgumentException;
+            or System.Xml.XmlException or OperationCanceledException or ArgumentException;
 }

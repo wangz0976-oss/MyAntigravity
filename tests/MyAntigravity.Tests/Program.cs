@@ -481,6 +481,26 @@ await Case("Stable/Beta 更新、SHA-256 和失败恢复", async () =>
     Check(found is { Version: "0.2.0-beta.1", Notes: "更新说明" }, "Beta 检查");
     var foundStable = await updater.CheckAsync("stable", "0.1.0-beta.1", CancellationToken.None);
     Check(foundStable is { Version: "0.1.0" }, "Stable 检查");
+    const string feed = """
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><link href="https://example.org/releases/tag/v9.0.0-beta.9" /></entry>
+          <entry><link href="https://github.com/wangz0976-oss/MyAntigravity/releases/tag/v0.2.0-beta.2" /></entry>
+          <entry><link href="https://github.com/wangz0976-oss/MyAntigravity/releases/tag/v0.2.0-beta.1" /></entry>
+          <entry><link href="https://github.com/wangz0976-oss/MyAntigravity/releases/tag/v0.1.0" /></entry>
+        </feed>
+        """;
+    using var limitedHttp = new HttpClient(new FakeHttp(url => url.AbsoluteUri switch
+    {
+        "https://github.com/wangz0976-oss/MyAntigravity/releases.atom" => new StringContent(feed),
+        var value when value == beta + "update-beta.json" => new StringContent(Manifest("0.2.0-beta.1", "beta", beta)),
+        var value when value == stable + "update-stable.json" => new StringContent(Manifest("0.1.0", "stable", stable)),
+        _ => new StringContent("")
+    }, url => url.Host == "api.github.com" ? HttpStatusCode.Forbidden :
+        url.AbsolutePath.Contains("v0.2.0-beta.2", StringComparison.Ordinal) ? HttpStatusCode.NotFound : HttpStatusCode.OK));
+    var fallback = new Updates(limitedHttp, scratch);
+    Check(await fallback.CheckAsync("beta", "0.1.0", CancellationToken.None) == found,
+        "GitHub API 限流时使用同一仓库的公开发布订阅，跳过没有更新清单的标签");
+    Check(await fallback.CheckAsync("stable", "0.1.0", CancellationToken.None) is null, "订阅回退保留渠道和版本比较");
     Check(await updater.CheckAsync("stable", "0.1.0", CancellationToken.None) is null, "防止降级");
     var path = await updater.DownloadAsync(found!, new Progress<int?>(), CancellationToken.None);
     Check(File.ReadAllBytes(path).SequenceEqual(payload), "校验后的下载落盘");
@@ -824,8 +844,9 @@ static async Task ThrowsAsync<T>(Func<Task> test) where T : Exception
 static string Value(JsonElement element, string key) => element.TryGetProperty(key, out var field)
     ? field.GetString() ?? "" : "";
 
-sealed class FakeHttp(Func<Uri, HttpContent> get) : HttpMessageHandler
+sealed class FakeHttp(Func<Uri, HttpContent> get, Func<Uri, HttpStatusCode>? status = null) : HttpMessageHandler
 {
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-        Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = get(request.RequestUri!) });
+        Task.FromResult(new HttpResponseMessage(status?.Invoke(request.RequestUri!) ?? HttpStatusCode.OK)
+            { Content = get(request.RequestUri!) });
 }

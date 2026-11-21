@@ -1,7 +1,9 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 
 namespace MyAntigravity;
 
@@ -77,6 +79,7 @@ public sealed record UpdateManifest(string Version, string Channel, Uri Download
 public sealed class Updates(HttpClient http, string dataDirectory)
 {
     private const string Project = "wangz0976-oss/MyAntigravity";
+    private const string ReleasePage = "https://github.com/" + Project + "/releases";
 
     public async Task<UpdateManifest?> CheckAsync(string channel, string current, CancellationToken cancellation)
     {
@@ -86,11 +89,13 @@ public sealed class Updates(HttpClient http, string dataDirectory)
         using var request = new HttpRequestMessage(HttpMethod.Get, $"https://api.github.com/repos/{Project}/releases?per_page=100");
         request.Headers.UserAgent.Add(new ProductInfoHeaderValue("MyAntigravity", "0.1"));
         using var response = await http.SendAsync(request, cancellation).ConfigureAwait(false);
-        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        var installed = ReleaseVersion.Parse(current);
+        if (response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.TooManyRequests)
+            return await CheckFeedAsync(channel, installed, cancellation).ConfigureAwait(false);
+        if (response.StatusCode == HttpStatusCode.NotFound)
             throw new InvalidOperationException("GitHub 更新通道尚未公开。");
         response.EnsureSuccessStatusCode();
         using var releases = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellation).ConfigureAwait(false));
-        var installed = ReleaseVersion.Parse(current);
         var candidates = new List<(ReleaseVersion Version, Uri Manifest, string Installer)>();
         foreach (var release in releases.RootElement.Items())
         {
@@ -106,8 +111,7 @@ public sealed class Updates(HttpClient http, string dataDirectory)
             var assets = release.Field("assets").Items().ToArray();
             var manifest = assets.FirstOrDefault(asset => asset.Text("name") == $"update-{channel}.json");
             var installer = assets.FirstOrDefault(asset => asset.Text("name") == "MyAntigravity-Setup.exe");
-            const string basePath = "https://github.com/" + Project + "/releases/download/";
-            var prefix = basePath + tag + "/";
+            var prefix = ReleasePage + "/download/" + tag + "/";
             if (version.CompareTo(installed) > 0 &&
                 manifest.Text("browser_download_url") == prefix + $"update-{channel}.json" &&
                 installer.Text("browser_download_url") == prefix + "MyAntigravity-Setup.exe")
@@ -119,8 +123,47 @@ public sealed class Updates(HttpClient http, string dataDirectory)
         if (best.Version is null)
             return null;
 
-        var verified = UpdateManifest.Parse(await http.GetStringAsync(best.Manifest, cancellation).ConfigureAwait(false), channel);
-        if (verified.Version != best.Version.ToString() || verified.DownloadUrl.AbsoluteUri != best.Installer)
+        var manifestText = await http.GetStringAsync(best.Manifest, cancellation).ConfigureAwait(false);
+        return ValidateManifest(manifestText, channel, best.Version, best.Installer);
+    }
+
+    private async Task<UpdateManifest?> CheckFeedAsync(string channel, ReleaseVersion installed,
+        CancellationToken cancellation)
+    {
+        const string tagPrefix = ReleasePage + "/tag/v";
+        var text = await http.GetStringAsync(ReleasePage + ".atom", cancellation).ConfigureAwait(false);
+        var feed = XDocument.Parse(text);
+        XNamespace atom = "http://www.w3.org/2005/Atom";
+        var candidates = new HashSet<ReleaseVersion>();
+        foreach (var entry in feed.Descendants(atom + "entry"))
+        {
+            var link = (string?)entry.Element(atom + "link")?.Attribute("href");
+            if (link?.StartsWith(tagPrefix, StringComparison.Ordinal) != true)
+                continue;
+            ReleaseVersion version;
+            try { version = ReleaseVersion.Parse(link[tagPrefix.Length..]); }
+            catch (FormatException) { continue; }
+            if ((version.Prerelease is not null) == (channel == "beta") && version.CompareTo(installed) > 0)
+                candidates.Add(version);
+        }
+
+        foreach (var version in candidates.OrderDescending())
+        {
+            var prefix = $"{ReleasePage}/download/v{version}/";
+            using var response = await http.GetAsync(prefix + $"update-{channel}.json", cancellation).ConfigureAwait(false);
+            if (response.StatusCode == HttpStatusCode.NotFound)
+                continue;
+            response.EnsureSuccessStatusCode();
+            var manifestText = await response.Content.ReadAsStringAsync(cancellation).ConfigureAwait(false);
+            return ValidateManifest(manifestText, channel, version, prefix + "MyAntigravity-Setup.exe");
+        }
+        return null;
+    }
+
+    private static UpdateManifest ValidateManifest(string text, string channel, ReleaseVersion version, string installer)
+    {
+        var verified = UpdateManifest.Parse(text, channel);
+        if (verified.Version != version.ToString() || verified.DownloadUrl.AbsoluteUri != installer)
             throw new FormatException("更新清单与 GitHub Release 的安装包信息不一致。");
         return verified;
     }
