@@ -47,13 +47,15 @@ public sealed class ConversationMessage
     }
 
     public int Index { get; }
-    public MessageSpeaker Speaker { get; }
-    internal string? MessageId { get; }
+    public MessageSpeaker Speaker { get; private set; }
+    internal string? MessageId { get; set; }
+    public bool IsGenerating { get; internal set; }
+    public int Length => body.Length;
     public string Text => body.ToString();
     public string Label => Speaker switch
     {
         MessageSpeaker.User => "你",
-        MessageSpeaker.Assistant => "Agent",
+        MessageSpeaker.Assistant => IsGenerating ? "Agent（生成中）" : "Agent",
         MessageSpeaker.FollowUp => "你（追加指令）",
         _ => "提示"
     };
@@ -67,16 +69,28 @@ public sealed class ConversationMessage
         int end = Math.Min(text.Length, previewLength);
         if (end > 0 && char.IsHighSurrogate(text[end - 1]))
             end--;
-        return $"{Label}：{text[..end]}{(end < text.Length || sampleLength < body.Length ? "…" : "")}";
+        return text.Length == 0 && IsGenerating ? Label :
+            $"{Label}：{text[..end]}{(end < text.Length || sampleLength < body.Length ? "…" : "")}";
     }
 
     internal void Append(string text) => body.Append(text);
+
+    internal void FinishGeneration(string emptyNotice)
+    {
+        IsGenerating = false;
+        if (body.Length == 0)
+        {
+            Speaker = MessageSpeaker.Notice;
+            body.Append(emptyNotice);
+        }
+    }
 }
 
 public sealed class ConversationTranscript
 {
     private readonly List<ConversationMessage> messages = [];
     private ConversationMessage? current;
+    public ConversationMessage? LiveReply { get; private set; }
 
     public IReadOnlyList<ConversationMessage> Messages => messages;
 
@@ -101,9 +115,39 @@ public sealed class ConversationTranscript
 
     public void EndChunks() => current = null;
 
+    public void BeginReply()
+    {
+        EndChunks();
+        LiveReply = AddMessage(MessageSpeaker.Assistant, "", null);
+        LiveReply.IsGenerating = true;
+    }
+
+    public ConversationMessage AppendReply(string text, string? messageId)
+    {
+        var reply = LiveReply ?? throw new InvalidOperationException("本轮回复尚未开始。");
+        if (reply.Length > 0 && reply.MessageId != messageId)
+        {
+            reply.IsGenerating = false;
+            LiveReply = reply = AddMessage(MessageSpeaker.Assistant, "", messageId);
+            reply.IsGenerating = true;
+        }
+        reply.MessageId = messageId;
+        reply.Append(text);
+        return reply;
+    }
+
+    public ConversationMessage? FinishReply(string emptyNotice)
+    {
+        var reply = LiveReply;
+        LiveReply = null;
+        reply?.FinishGeneration(emptyNotice);
+        return reply;
+    }
+
     public void Clear()
     {
         EndChunks();
+        LiveReply = null;
         messages.Clear();
     }
 

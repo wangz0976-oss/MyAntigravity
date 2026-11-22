@@ -260,6 +260,24 @@ public sealed class AcpAgent : IAsyncDisposable
             : connection.RequestAsync(option.Method, new { sessionId, configId = option.Id, value = choice.Id });
     }
 
+    public Task<SessionSettingsResult> ApplySettingsAsync(string sessionId, IReadOnlyList<SessionOption> options,
+        IReadOnlyList<SessionSettingChange> changes) => SessionSettings.ApplyAsync(options, changes, async (option, choice) =>
+    {
+        var result = await SetOptionAsync(sessionId, option, choice).ConfigureAwait(false);
+        if (option.Method == "session/set_mode")
+        {
+            var updated = options.Select(item => item.Id == option.Id ? option with { Current = choice.Id } : item).ToArray();
+            return options = updated;
+        }
+        if (result.Field("configOptions").ValueKind != JsonValueKind.Array)
+            throw new IOException("CLI 未返回更新后的会话设置。");
+        var current = SessionOption.Parse(result);
+        if (!current.Any(item => item.Category == "mode") &&
+            options.FirstOrDefault(item => item.Method == "session/set_mode") is { } mode)
+            current = [.. current, mode];
+        return options = current;
+    });
+
     private bool HasCapability(string key) =>
         capabilities.Field("sessionCapabilities").Field(key).ValueKind == JsonValueKind.Object;
 

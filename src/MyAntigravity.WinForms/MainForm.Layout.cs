@@ -141,7 +141,7 @@ internal sealed partial class MainForm : Form
                 Ctrl+Shift+P：搜索并填入官方命令，确认后再发送。
                 Ctrl+F9：从列表打开技能、MCP 服务或已安装插件。
                 Ctrl+Shift+R：朗读最新回复，在审批窗口朗读操作详情。
-                Ctrl+M：查看模型、权限模式和推理等级。Ctrl+Shift+D：断开 ACP。
+                Ctrl+M：选择模型、权限模式和推理等级，按回车一次应用。Ctrl+Shift+D：断开 ACP。
                 Ctrl+Shift+S：账户与连接。Alt+R 重新核验，Alt+U 刷新额度，Alt+T 在官方终端查询。
                 Ctrl+L：任务日志。Ctrl+Shift+L：任务计划。Ctrl+I：完整状态。
                 Ctrl+D：文件差异。Ctrl+Page Up / Down 切换文件，F7 / F8 切换差异段。

@@ -25,6 +25,11 @@ if (args is ["--fixture-steering"])
     await Fixture.RunAsync(true, steering: true);
     return;
 }
+if (args is ["--fixture-streaming"])
+{
+    await Fixture.RunAsync(true, streaming: true);
+    return;
+}
 
 string scratch = Path.Combine(Directory.GetCurrentDirectory(), ".work", "test-data");
 Directory.CreateDirectory(scratch);
@@ -702,6 +707,65 @@ await Case("真实子进程上的 JSON-RPC 模拟服务与会话回放", async (
     await client.CloseAsync(id);
 });
 
+await Case("ACP 统一提交会话设置，按模型刷新后验证推理等级", async () =>
+{
+    await using var client = StartFixture((_, _) => Task.FromResult<string?>(null), streaming: true);
+    await client.InitializeAsync("0.1.0");
+    var opened = await client.NewSessionAsync();
+    string id = Value(opened, "sessionId");
+    var options = SessionOption.Parse(opened);
+    var changed = await client.ApplySettingsAsync(id, options,
+        [new("model", "second-model", "模型"), new("mode", "accept-edits", "权限模式"), new("thought_level", "high", "推理等级")]);
+    Check(changed.Applied.Count == 3 && changed.Problems.Count == 0 &&
+        changed.Options.Select(option => option.Current).SequenceEqual(["second-model", "accept-edits", "high"]),
+        "与子进程逐项交换真实 ACP 值，三项只确认一次");
+    var limited = await client.ApplySettingsAsync(id, changed.Options,
+        [new("model", "plain-model", "模型"), new("thought_level", "low", "推理等级")]);
+    Check(limited.Applied.Count == 1 && limited.Problems.Single().Contains("重新选择") &&
+        limited.Options.All(option => option.Category != "thought_level"), "模型变更后跳过不存在的推理选项，保留确认结果");
+    int attempted = 0;
+    var stopped = await SessionSettings.ApplyAsync(options,
+        [new("model", "second-model", "模型"), new("mode", "accept-edits", "权限模式")], (_, _) =>
+        {
+            attempted++;
+            return Task.FromException<IReadOnlyList<SessionOption>>(new IOException("连接中断"));
+        });
+    Check(attempted == 1 && stopped.Applied.Count == 0 && stopped.Problems[0].Contains("连接中断") &&
+        ReferenceEquals(stopped.Options, options), "子请求失败后保留最后确认状态及原因");
+});
+
+await Case("ACP 正文、推理和工具交错，保留稳定的生成中条目", async () =>
+{
+    await using var client = StartFixture((_, _) => Task.FromResult<string?>(null), streaming: true);
+    await client.InitializeAsync("0.1.0");
+    string id = Value(await client.NewSessionAsync(), "sessionId");
+    var transcript = new ConversationTranscript();
+    transcript.Add(MessageSpeaker.User, "开始");
+    transcript.BeginReply();
+    var reply = transcript.LiveReply!;
+    Check(reply.IsGenerating && reply.ToString() == "Agent（生成中）", "等待首段时即可定位到回复占位");
+    var reasoning = new ActivityRecord(id, DateTimeOffset.UnixEpoch, "本轮推理记录", "", TaskActivityKind.Reasoning);
+    int tools = 0;
+    client.SessionUpdated += (_, data) =>
+    {
+        var type = Value(data, "sessionUpdate");
+        if (type == "agent_message_chunk")
+            transcript.AppendReply(Value(data.GetProperty("content"), "text"), Value(data, "messageId"));
+        else if (type == "agent_thought_chunk")
+            reasoning.AppendDetail(Value(data.GetProperty("content"), "text"));
+        else if (type == "tool_call")
+            tools++;
+    };
+    await client.PromptAsync(id, "开始").WaitAsync(TimeSpan.FromSeconds(6));
+    Check(ReferenceEquals(reply, transcript.LiveReply) && reply.Text == "目前已完成。" && reasoning.Detail == "先核对再验证" &&
+        tools == 1 && reasoning.Matches(id, TaskActivityKind.Reasoning, ["再验"]), "真实消息交错时正文和推理仍分别完整拼接");
+    transcript.FinishReply("无正文");
+    Check(!reply.IsGenerating && reply.Label == "Agent" && transcript.Messages.Count == 2, "原条目就地转为普通回复");
+    transcript.BeginReply();
+    var empty = transcript.FinishReply("任务已中止，尚无正文。");
+    Check(empty is { Speaker: MessageSpeaker.Notice, IsGenerating: false }, "中止或纯工具轮结束后清除生成中状态");
+});
+
 await Case("ACP 图片能力、纯图片消息、混合消息和大小限制", async () =>
 {
     var bytes = new byte[] { 0x89, 0x50, 0x4e, 0x47 };
@@ -1130,14 +1194,15 @@ await Case("技能来源与 MCP 配置的安全显示", () =>
 Console.WriteLine($"全部 {testCount} 组本地测试通过。");
 
 AcpAgent StartFixture(Func<PermissionRequest, CancellationToken, Task<string?>> approve, bool supportsImages = true,
-    string? account = null, Func<ElicitationRequest, CancellationToken, Task<ElicitationResponse>>? question = null, bool steering = false)
+    string? account = null, Func<ElicitationRequest, CancellationToken, Task<ElicitationResponse>>? question = null,
+    bool steering = false, bool streaming = false)
 {
     string binary = Environment.ProcessPath ?? throw new InvalidOperationException("未找到测试进程路径。");
     var start = Cli.StartInfo(binary, scratch, redirect: true);
     if (Path.GetFileNameWithoutExtension(binary) == "dotnet")
         start.ArgumentList.Add(typeof(Fixture).Assembly.Location);
     if (account is null)
-        start.ArgumentList.Add(steering ? "--fixture-steering" : question is not null ? "--fixture-rich"
+        start.ArgumentList.Add(streaming ? "--fixture-streaming" : steering ? "--fixture-steering" : question is not null ? "--fixture-rich"
             : supportsImages ? "--fixture" : "--fixture-no-images");
     else
     {

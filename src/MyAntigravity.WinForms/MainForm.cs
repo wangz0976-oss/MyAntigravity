@@ -13,11 +13,9 @@ internal sealed partial class MainForm : Form
     private readonly Dictionary<(string ToolId, string Path, int Index), FileChange> changes = [];
     private readonly Dictionary<string, string> toolTitles = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim interactionQueue = new(1, 1);
-    private readonly System.Windows.Forms.Timer activityTimer = new() { Interval = 900 };
     private AcpAgent? agent;
     private string? project;
     private string? sessionId;
-    private string? queuedActivity;
     private string? contextUsage;
     private string? lastTurnUsage;
     private IReadOnlyList<SessionOption> options = [];
@@ -47,13 +45,6 @@ internal sealed partial class MainForm : Form
         ReloadProjects();
         UpdateCommands();
         workspaceSave.Tick += (_, _) => FlushWorkspace();
-        activityTimer.Tick += (_, _) =>
-        {
-            activityTimer.Stop();
-            if (queuedActivity is { } text && prompting)
-                SetStatus(text, record: false);
-            queuedActivity = null;
-        };
 
         Shown += async (_, _) =>
         {
@@ -177,8 +168,6 @@ internal sealed partial class MainForm : Form
         {
             busy = false;
             prompting = false;
-            activityTimer.Stop();
-            queuedActivity = null;
             UpdateCommands();
         }
     }
@@ -527,7 +516,7 @@ internal sealed partial class MainForm : Form
                 ? "\n图片附件：" + string.Join("、", images.Select(image => image.Name)) : "";
             if (files.Length > 0)
                 attachmentText += "\n文本与代码附件：" + string.Join("、", files.Select(file => file.Name));
-            AddMessage(MessageSpeaker.User, text + attachmentText);
+            BeginStreamingReply(text + attachmentText);
             SetStatus("任务进行中。");
             try
             {
@@ -535,9 +524,11 @@ internal sealed partial class MainForm : Form
                     files.Select(file => file.Payload).ToArray());
                 sending.Sending.Remove(pending);
                 RememberDraft(owner, sending);
-                if (sessionId == activeSession && ReferenceEquals(agent, current))
-                    lastTurnUsage = SessionUsage.LastTurn(result);
                 var reason = StringValue(result, "stopReason");
+                FinishStreamingReply(reason == "cancelled" ? "任务已中止，尚无正文。" : "任务已结束，CLI 未返回正文。");
+                if (closing || sessionId != activeSession || !ReferenceEquals(agent, current))
+                    return;
+                lastTurnUsage = SessionUsage.LastTurn(result);
                 if (reason == "cancelled")
                     SetStatus("任务已中止。", speak: true);
                 else if (reason == "end_turn")
@@ -564,9 +555,8 @@ internal sealed partial class MainForm : Form
             }
             finally
             {
+                FinishStreamingReply(cancelRequested ? "任务已中止，尚无正文。" : "任务未完成，CLI 未返回正文。");
                 transcript.EndChunks();
-                if (!closing)
-                    RenderMessages();
             }
         }, isPrompt: true);
     }
@@ -587,21 +577,27 @@ internal sealed partial class MainForm : Form
 
     private Task SelectOptionAsync() => RunAsync(async () =>
     {
-        if (sessionId is null || agent is null || options.Count == 0)
+        if (sessionId is not { } session || agent is not { Connected: true } current || options.Count == 0)
             return;
-        if (Dialogs.SessionSettings(this, options) is not { } selected)
+        if (Dialogs.SessionSettings(this, options) is not { Count: > 0 } selected ||
+            sessionId != session || !ReferenceEquals(agent, current))
             return;
-        var result = await agent.SetOptionAsync(sessionId, selected.Option, selected.Choice);
-        if (selected.Option.Method == "session/set_mode")
+        var result = await current.ApplySettingsAsync(session, options, selected);
+        if (closing || sessionId != session || !ReferenceEquals(agent, current))
+            return;
+        options = result.Options;
+        if (result.Problems.Count == 0)
         {
-            options = options.Select(option => option == selected.Option
-                ? option with { Current = selected.Choice.Id } : option).ToArray();
+            if (result.Applied.Count != 0)
+                SetStatus(AgentText.Visible($"已应用设置。{string.Join("；", result.Applied)}"));
+            return;
         }
-        else
-        {
-            options = SessionOption.Parse(result);
-        }
-        SetStatus($"已更新 {AgentText.Visible(selected.Option.Label)}：{AgentText.Visible(selected.Choice.Name)}。");
+
+        var applied = result.Applied.Count == 0 ? "本次没有确认生效的改动。"
+            : "已应用：\n" + string.Join("\n", result.Applied);
+        var report = AgentText.Visible($"{applied}\n\n请核对：\n{string.Join("\n", result.Problems)}");
+        Log(report, "会话设置未全部应用", TaskActivityKind.Failure);
+        Dialogs.Text(this, "会话设置应用结果", report);
     });
 
     private void RememberActive()
@@ -704,6 +700,11 @@ internal sealed partial class MainForm : Form
                     StringValue(message, "text") is not { Length: > 0 } text)
                     break;
                 var visible = AgentText.Visible(text);
+                if (speaker == MessageSpeaker.Assistant && transcript.LiveReply is not null)
+                {
+                    ReceiveReplyText(visible, StringValue(data, "messageId"));
+                    break;
+                }
                 var entry = transcript.AppendChunk(speaker, visible, StringValue(data, "messageId"), out bool started);
                 updatedMessages.Add(entry.Index);
                 messageRefresh.Start();
@@ -714,6 +715,12 @@ internal sealed partial class MainForm : Form
                     latestReply.Append(visible);
                     readReplyMenu.Enabled = latestReply.Length > 0;
                 }
+                break;
+
+            case "agent_thought_chunk":
+                if (transcript.LiveReply is not null && data.TryGetProperty("content", out var thought) &&
+                    StringValue(thought, "text") is { Length: > 0 } reasoning)
+                    ReceiveReasoning(AgentText.Visible(reasoning));
                 break;
 
             case "config_option_update":
@@ -771,11 +778,8 @@ internal sealed partial class MainForm : Form
                     var key = (toolId ?? "", diff.Path, diffIndex++);
                     changes[key] = diff;
                 }
-                if (prompting)
-                {
-                    queuedActivity = summary;
-                    activityTimer.Start();
-                }
+                if (transcript.LiveReply is not null)
+                    QueueReplyPhase(ReplyPhase.Tools);
                 break;
 
             case "plan":
@@ -806,7 +810,8 @@ internal sealed partial class MainForm : Form
     {
         var response = latestReply.ToString().Trim();
         if (response.Length > 0 && !ScreenReaderSpeech.TrySpeak(response))
-            Dialogs.Text(this, "最新回复", response);
+            Dialogs.ReadMessage(this, "最新回复", latestReply.ToString(),
+                transcript.LiveReply is not null ? () => latestReply.ToString() : null);
     }
 
 
@@ -859,7 +864,6 @@ internal sealed partial class MainForm : Form
         closing = true;
         startupUpdate?.Cancel();
         workspaceSave.Dispose();
-        activityTimer.Dispose();
         messageRefresh.Dispose();
         if (agent is not null)
         {

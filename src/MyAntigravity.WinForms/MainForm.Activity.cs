@@ -4,8 +4,9 @@ internal sealed partial class MainForm
 {
     private readonly List<ActivityRecord> activity = [];
     private event Action<ActivityRecord>? ActivityRecorded;
+    private event Action<ActivityRecord>? ActivityUpdated;
 
-    private void Log(string text, string? summary = null, TaskActivityKind kind = TaskActivityKind.General)
+    private ActivityRecord Log(string text, string? summary = null, TaskActivityKind kind = TaskActivityKind.General)
     {
         var firstLine = (summary ?? text).AsSpan().TrimStart();
         int newline = firstLine.IndexOfAny('\r', '\n');
@@ -16,6 +17,7 @@ internal sealed partial class MainForm
         var entry = new ActivityRecord(sessionId, DateTimeOffset.Now, caption, text, kind);
         activity.Add(entry);
         ActivityRecorded?.Invoke(entry);
+        return entry;
     }
 
     private Task ShowActivityAsync()
@@ -40,7 +42,7 @@ internal sealed partial class MainForm
         {
             AccessibleName = "记录类型", Width = 155, DropDownStyle = ComboBoxStyle.DropDownList, TabIndex = 1
         };
-        kinds.Items.AddRange(["全部记录", "失败和错误", "审批和提问"]);
+        kinds.Items.AddRange(["全部记录", "失败和错误", "审批和提问", "推理记录"]);
         kinds.SelectedIndex = 0;
         var entries = new ListBox
         {
@@ -57,6 +59,7 @@ internal sealed partial class MainForm
         var full = new Button { Text = "查看完整日志 (&W)", AutoSize = true };
         var close = new Button { Text = "关闭 (&C)", AutoSize = true, DialogResult = DialogResult.Cancel };
         string[] terms = [];
+        string shownDetail = "";
         TaskActivityKind? kind = null;
         bool Relevant(ActivityRecord entry) => entry.Matches(session, kind, terms);
 
@@ -65,16 +68,22 @@ internal sealed partial class MainForm
         void ShowDetails()
         {
             var entry = entries.SelectedItem as ActivityRecord;
-            details.Text = entry is null ? "没有符合条件的记录。" : $"{entry.Timestamp}  {entry.Summary}\n\n{entry.Detail}";
+            shownDetail = entry is null ? "没有符合条件的记录。" : FormatDetail(entry);
+            details.Text = shownDetail;
             details.Select(0, 0);
             copy.Enabled = entry is not null;
         }
+
+        static string FormatDetail(ActivityRecord entry) => $"{entry.Timestamp}  {entry.Summary}\n\n{entry.Detail}".ReplaceLineEndings("\n");
 
         void RefreshMatches()
         {
             var previous = entries.SelectedItem;
             terms = query.Text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-            kind = kinds.SelectedIndex switch { 1 => TaskActivityKind.Failure, 2 => TaskActivityKind.Interaction, _ => null };
+            kind = kinds.SelectedIndex switch
+            {
+                1 => TaskActivityKind.Failure, 2 => TaskActivityKind.Interaction, 3 => TaskActivityKind.Reasoning, _ => null
+            };
             entries.BeginUpdate();
             try
             {
@@ -100,6 +109,21 @@ internal sealed partial class MainForm
             if (entries.SelectedIndex < 0)
                 entries.SelectedIndex = 0;
             UpdateCount();
+        }
+
+        void UpdateRecord(ActivityRecord entry)
+        {
+            if (!entries.Items.Contains(entry))
+            {
+                Record(entry);
+                return;
+            }
+            if (!ReferenceEquals(entries.SelectedItem, entry))
+                return;
+            var latest = FormatDetail(entry);
+            if (latest.Length > shownDetail.Length)
+                Dialogs.AppendReadingText(details, latest[shownDetail.Length..]);
+            shownDetail = latest;
         }
 
         query.TextChanged += (_, _) => RefreshMatches();
@@ -173,7 +197,12 @@ internal sealed partial class MainForm
         RefreshMatches();
         window.ActiveControl = entries.Items.Count == 0 ? query : entries;
         ActivityRecorded += Record;
+        ActivityUpdated += UpdateRecord;
         try { window.ShowDialog(this); }
-        finally { ActivityRecorded -= Record; }
+        finally
+        {
+            ActivityRecorded -= Record;
+            ActivityUpdated -= UpdateRecord;
+        }
     }
 }

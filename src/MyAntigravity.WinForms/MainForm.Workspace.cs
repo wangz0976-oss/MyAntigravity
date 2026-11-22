@@ -41,7 +41,7 @@ internal sealed partial class MainForm
 
     private void RememberReadingPosition()
     {
-        if (!readingReady || renderingMessages || draftOwner is not { } owner || SelectedMessage is not { } message)
+        if (!readingReady || renderingMessages || draftOwner is not { } owner || SelectedMessage is not { IsGenerating: false } message)
             return;
         QueueWorkspaceSave(settings.SaveBookmark(owner.Session, owner.Project, ReadingBookmark.From(message)));
     }

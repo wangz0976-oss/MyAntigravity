@@ -3,7 +3,8 @@ using System.Text.Json;
 
 internal static class Fixture
 {
-    internal static async Task RunAsync(bool supportsImages, string? account = null, bool rich = false, bool steering = false)
+    internal static async Task RunAsync(bool supportsImages, string? account = null, bool rich = false, bool steering = false,
+        bool streaming = false)
     {
         Console.InputEncoding = new UTF8Encoding(false);
         Console.OutputEncoding = new UTF8Encoding(false);
@@ -13,6 +14,9 @@ internal static class Fixture
         var expectedOption = "deny";
         string? expectedAnswer = null;
         bool cancelled = false;
+        string modelValue = "first-model";
+        string modeValue = "default";
+        string reasoningValue = "low";
         while (await Console.In.ReadLineAsync() is { } line)
         {
             using var parsed = JsonDocument.Parse(line);
@@ -129,11 +133,30 @@ internal static class Fixture
                             new { name = "bad command", description = "Invalid" }
                         }
                     });
-                    Reply(message.GetProperty("id"), new { sessionId = "demo", configOptions = ConfigOptions() });
+                    Reply(message.GetProperty("id"), new { sessionId = "demo", configOptions = streaming ? CurrentSettings() : ConfigOptions() });
                     break;
                 case "session/set_config_option":
                     var configId = parameters.GetProperty("configId").GetString();
                     var configValue = parameters.GetProperty("value").GetString();
+                    if (streaming)
+                    {
+                        switch (configId, configValue)
+                        {
+                            case ("model", "second-model" or "plain-model"):
+                                modelValue = configValue;
+                                reasoningValue = "low";
+                                break;
+                            case ("mode", "accept-edits") when modelValue == "second-model":
+                                modeValue = configValue;
+                                break;
+                            case ("thought_level", "high") when modelValue == "second-model" && modeValue == "accept-edits":
+                                reasoningValue = configValue;
+                                break;
+                            default: throw new InvalidOperationException("未按模型变化后的选项提交设置。");
+                        }
+                        Reply(message.GetProperty("id"), new { configOptions = CurrentSettings() });
+                        break;
+                    }
                     if ((configId, configValue) is not (("m", "dynamic-model") or ("mode", "accept-edits")))
                         throw new InvalidOperationException("未收到预期的 ACP 配置 ID 或选项值。");
                     Reply(message.GetProperty("id"), new
@@ -154,6 +177,17 @@ internal static class Fixture
                     break;
                 case "session/prompt":
                     var blocks = parameters.GetProperty("prompt");
+                    if (streaming)
+                    {
+                        Update("demo", new { sessionUpdate = "agent_thought_chunk", content = new { type = "text", text = "先核对" } });
+                        Update("demo", new { sessionUpdate = "tool_call", toolCallId = "fixture-tool", title = "读取资料", status = "in_progress" });
+                        Update("demo", new { sessionUpdate = "agent_message_chunk", messageId = "reply", content = new { type = "text", text = "目前" } });
+                        await Task.Delay(80);
+                        Update("demo", new { sessionUpdate = "agent_thought_chunk", content = new { type = "text", text = "再验证" } });
+                        Update("demo", new { sessionUpdate = "agent_message_chunk", messageId = "reply", content = new { type = "text", text = "已完成。" } });
+                        Reply(message.GetProperty("id"), new { stopReason = "end_turn" });
+                        break;
+                    }
                     if (steering)
                     {
                         var messageId = message.GetProperty("id");
@@ -263,6 +297,23 @@ internal static class Fixture
                 !parameters.GetProperty("additionalDirectories").EnumerateArray().Select(item => item.GetString())
                     .SequenceEqual([Path.Combine(cwd, "附加测试目录")]))
                 throw new InvalidOperationException("没有收到附加工作目录。");
+        }
+
+        object[] CurrentSettings()
+        {
+            static object Entry(string id, string current, params string[] variants) => new
+            {
+                id, name = id, category = id, type = "select", currentValue = current,
+                options = variants.Select(value => new { value, name = value }).ToArray()
+            };
+            var items = new List<object>
+            {
+                Entry("model", modelValue, "first-model", "second-model", "plain-model"),
+                Entry("mode", modeValue, "default", "accept-edits")
+            };
+            if (modelValue != "plain-model")
+                items.Add(Entry("thought_level", reasoningValue, "low", "high"));
+            return items.ToArray();
         }
     }
 

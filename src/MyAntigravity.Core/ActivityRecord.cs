@@ -1,15 +1,30 @@
+using System.Text;
+
 namespace MyAntigravity;
 
-public enum TaskActivityKind { General, Failure, Interaction }
+public enum TaskActivityKind { General, Failure, Interaction, Reasoning }
 
-public sealed record ActivityRecord(string? Session, DateTimeOffset At, string Summary, string Detail, TaskActivityKind Kind)
+public sealed class ActivityRecord(string? session, DateTimeOffset at, string summary, string detail, TaskActivityKind kind)
 {
-    public string Timestamp => At.ToLocalTime().ToString("HH:mm:ss");
+    private StringBuilder? streamed;
+    public string? Session => session;
+    public string Summary => summary;
+    public TaskActivityKind Kind => kind;
+    public string Detail => streamed?.ToString() ?? detail;
+    public string Timestamp => at.ToLocalTime().ToString("HH:mm:ss");
     public string LogText => $"[{Timestamp}] {Detail}";
     public override string ToString() => $"{Timestamp} · {Summary}";
 
-    public bool Matches(string? session, TaskActivityKind? kind, IReadOnlyList<string> terms) =>
-        (session is null || Session == session) && (kind is null || Kind == kind) &&
-        terms.All(term => Summary.Contains(term, StringComparison.OrdinalIgnoreCase) ||
-            Detail.Contains(term, StringComparison.OrdinalIgnoreCase));
+    public void AppendDetail(string text) => (streamed ??= new StringBuilder(detail)).Append(text);
+
+    public bool Matches(string? requestedSession, TaskActivityKind? requestedKind, IReadOnlyList<string> terms)
+    {
+        if ((requestedSession is not null && Session != requestedSession) || (requestedKind is not null && Kind != requestedKind))
+            return false;
+        if (terms.Count == 0)
+            return true;
+        var text = Detail;
+        return terms.All(term => Summary.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+            text.Contains(term, StringComparison.OrdinalIgnoreCase));
+    }
 }

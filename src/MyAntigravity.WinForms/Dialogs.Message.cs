@@ -1,9 +1,27 @@
 using System.Windows.Forms.Automation;
+using System.Runtime.InteropServices;
 
 namespace MyAntigravity;
 
 internal static partial class Dialogs
 {
+    private const int GetScrollPosition = 0x04DD;
+    private const int RestoreScrollPosition = 0x04DE;
+
+    [DllImport("user32.dll", ExactSpelling = true)]
+    private static extern nint SendMessageW(nint window, int message, nint unused, ref Point position);
+
+    internal static void AppendReadingText(RichTextBox body, string suffix)
+    {
+        var scroll = new Point();
+        SendMessageW(body.Handle, GetScrollPosition, 0, ref scroll);
+        int caret = body.SelectionStart;
+        int selection = body.SelectionLength;
+        body.AppendText(suffix);
+        body.Select(caret, selection);
+        SendMessageW(body.Handle, RestoreScrollPosition, 0, ref scroll);
+    }
+
     internal static void ReadMessage(Form owner, string title, string text, Func<string>? readLatest,
         TurnToolResult? toolResult = null, IReadOnlyList<string>? workspaces = null)
     {
@@ -75,7 +93,7 @@ internal static partial class Dialogs
                 Jump(selected.Offset, selected.Address.Length);
         };
 
-        using var timer = readLatest is null ? null : new System.Windows.Forms.Timer { Interval = 350 };
+        using var timer = readLatest is null ? null : new System.Windows.Forms.Timer { Interval = 450 };
         if (timer is not null && readLatest is not null)
         {
             timer.Tick += (_, _) =>
@@ -83,11 +101,7 @@ internal static partial class Dialogs
                 string latest = readLatest().ReplaceLineEndings("\n");
                 if (latest.Length <= rendered.Length)
                     return;
-                int caret = body.SelectionStart;
-                int selection = body.SelectionLength;
-                body.AppendText(latest[rendered.Length..]);
-                body.Select(caret, selection);
-                body.ScrollToCaret();
+                AppendReadingText(body, latest[rendered.Length..]);
                 rendered = latest;
                 outline = MessageOutline.Parse(rendered);
                 UpdateCommands();

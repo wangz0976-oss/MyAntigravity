@@ -4,7 +4,8 @@ internal sealed partial class MainForm
 {
     private readonly ConversationTranscript transcript = new();
     private readonly HashSet<int> updatedMessages = [];
-    private readonly System.Windows.Forms.Timer messageRefresh = new() { Interval = 350 };
+    private readonly System.Windows.Forms.Timer messageRefresh = new() { Interval = 450 };
+    private int? deferredPreview;
     private readonly ListBox messages = new()
     {
         AccessibleName = "消息列表",
@@ -36,9 +37,11 @@ internal sealed partial class MainForm
         exportMessage.Click += async (_, _) => await ExportMessagesAsync(selectedOnly: true);
         messages.SelectedIndexChanged += (_, _) =>
         {
+            RefreshDeferredPreview();
             UpdateMessageCommands();
             RememberReadingPosition();
         };
+        messages.Leave += (_, _) => RefreshDeferredPreview();
         messages.DoubleClick += (_, _) => OpenSelectedMessage();
         messageRefresh.Tick += (_, _) => RenderMessages();
 
@@ -127,7 +130,15 @@ internal sealed partial class MainForm
                 messages.Items.Add(transcript.Messages[i].ToString());
             foreach (int index in updatedMessages.Where(index => index < previousCount))
             {
-                var preview = transcript.Messages[index].ToString();
+                var message = transcript.Messages[index];
+                if (message.IsGenerating && messages.Focused && selected == index)
+                {
+                    deferredPreview = index;
+                    continue;
+                }
+                if (deferredPreview == index)
+                    deferredPreview = null;
+                var preview = message.ToString();
                 if (!Equals(messages.Items[index], preview))
                     messages.Items[index] = preview;
             }
@@ -147,12 +158,23 @@ internal sealed partial class MainForm
             renderingMessages = false;
         }
         UpdateMessageCommands();
+        FlushStreamingActivity();
+    }
+
+    private void RefreshDeferredPreview()
+    {
+        if (renderingMessages || deferredPreview is not { } index)
+            return;
+        deferredPreview = null;
+        updatedMessages.Add(index);
+        messageRefresh.Start();
     }
 
     private void ClearMessages()
     {
         messageRefresh.Stop();
         updatedMessages.Clear();
+        deferredPreview = null;
         messages.Items.Clear();
         transcript.Clear();
         UpdateMessageCommands();
@@ -162,8 +184,9 @@ internal sealed partial class MainForm
     {
         if (SelectedMessage is not { } message)
             return;
-        Dialogs.ReadMessage(this, $"第 {message.Index + 1} 条消息 · {message.Label}", message.Text,
-            prompting ? () => message.Text : null);
+        string label = message.Speaker == MessageSpeaker.Assistant ? "Agent" : message.Label;
+        Dialogs.ReadMessage(this, $"第 {message.Index + 1} 条消息 · {label}", message.Text,
+            message.IsGenerating ? () => message.Text : null);
     }
 
     private void SpeakSelectedMessage()

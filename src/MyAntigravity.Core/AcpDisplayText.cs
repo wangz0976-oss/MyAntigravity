@@ -22,6 +22,7 @@ internal static class AcpDisplayText
 
     public static string? OptionDescription(string? category, string? fallback) => category switch
     {
+        "model" => "选择当前会话使用的模型。更换模型可能改变可选的推理等级。",
         "mode" => "决定当前会话遇到文件修改或命令时怎样审批。具体操作由 Antigravity CLI 按其权限规则判断。",
         "thought_level" => "调整当前模型回答前的推理深度。可选等级由官方 CLI 提供。",
         _ => fallback
