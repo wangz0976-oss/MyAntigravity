@@ -42,7 +42,7 @@ internal sealed partial class MainForm : Form
     private readonly ToolStripMenuItem commandPalette = Item("插入官方命令 (&P)", Keys.Control | Keys.Shift | Keys.P);
     private readonly ToolStripMenuItem commandFinder = Item("查找软件功能 (&F)", Keys.Control | Keys.Shift | Keys.K);
     private readonly ToolStripMenuItem sendMessageMenu = Item("发送消息 (&S)");
-    private readonly ToolStripMenuItem settingsMenu = Item("常规设置 (&S)");
+    private readonly ToolStripMenuItem settingsMenu = Item("打开设置 (&S)", Keys.Control | Keys.Oemcomma);
     private readonly ToolStripMenuItem sessionDefaultsMenu = Item("新会话默认 (&N)");
     private readonly ToolStripMenuItem updatesMenu = Item("检查更新 (&U)");
     private readonly ToolStripMenuItem extensionHub = Item("规则、技能、MCP 与插件 (&E)", Keys.Control | Keys.F9);
@@ -59,6 +59,9 @@ internal sealed partial class MainForm : Form
     private readonly Button showStatus = new() { Text = "查看状态 (&V)", AutoSize = true };
     private readonly Button showLog = new() { Text = "任务日志 (&L)", AutoSize = true };
     private readonly Button showDiff = new() { Text = "文件差异 (&F)", AutoSize = true };
+    private readonly Button openSettings = new() { Text = "设置 (&S)", AutoSize = true };
+    private readonly ListBox recentActivity = new() { AccessibleName = "实时活动", Dock = DockStyle.Fill,
+        IntegralHeight = false, HorizontalScrollbar = true };
     private readonly Label context = new() { Dock = DockStyle.Fill, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft, Text = "当前项目：未选择" };
 
     private void BuildUi()
@@ -72,6 +75,11 @@ internal sealed partial class MainForm : Form
 
         var menu = new MenuStrip { Dock = DockStyle.Top, TabIndex = 0, AccessibleName = "主菜单" };
         var projectMenu = Item("项目 (&P)");
+        menu.MenuActivate += (_, _) =>
+        {
+            if (!menu.Items.OfType<ToolStripMenuItem>().Any(item => item.Selected))
+                projectMenu.Select();
+        };
         projectWorktrees.DropDownItems.AddRange([
             Item("查看和打开工作树 (&O)", action: BrowseWorktreesAsync),
             Item("新建工作树 (&N)", action: CreateWorktreeAsync)]);
@@ -79,9 +87,9 @@ internal sealed partial class MainForm : Form
             projectChanges, projectWorktrees, additionalDirectories, projectExplorer, copyProjectPath, removeProject,
             new ToolStripSeparator(), Item("退出 (&X)", action: () => { Close(); return Task.CompletedTask; })]);
         var sessionMenu = Item("会话 (&C)");
-        sessionMenu.DropDownItems.AddRange([newSession, restore, findHistory, findAllHistory,
+        sessionMenu.DropDownItems.AddRange([newSession, restore, optionsMenu, findHistory, findAllHistory,
             new ToolStripSeparator(), renameSession, pinSession, archiveSession, archivedHistory, removeSession,
-            new ToolStripSeparator(), refresh, officialHistory, optionsMenu]);
+            new ToolStripSeparator(), refresh, officialHistory]);
         var messageMenu = Item("消息 (&M)");
         var attachments = Item("添加与管理附件 (&A)");
         attachments.DropDownItems.AddRange([imageMenu, textAttachmentsMenu]);
@@ -120,7 +128,7 @@ internal sealed partial class MainForm : Form
                 按 Alt 进入主菜单，左右选分类，下键打开，上下选功能，回车执行，Esc 返回。
                 “项目”管理目录，“会话”管理历史和模型，“消息”管阅读、发送和附件。
                 “任务”查看计划、日志和文件差异，也能中止任务。“账户”管登录和额度。
-                Tab / Shift+Tab 移动焦点。F6 / Shift+F6 在项目、会话历史、消息列表、输入和状态间切换。
+                Tab / Shift+Tab 移动焦点。F6 / Shift+F6 在项目、历史、消息、实时活动、输入和状态间切换。
 
                 消息列表用上下逐条选，左右跳到上一轮或下一轮提问。
                 回车读所选消息的全文，Esc 回到原位置。Ctrl+C 复制全文，Ctrl+F 查找当前会话的消息。
@@ -136,6 +144,7 @@ internal sealed partial class MainForm : Form
                 Ctrl+N：新建会话。Ctrl+R：刷新历史。Ctrl+H：恢复所选会话。
                 Ctrl+K：查找当前项目的会话。会话列表中按 F2 编辑本地名称。
                 Ctrl+Shift+K：搜索软件功能，按回车直接执行。也可从“帮助”菜单打开。
+                Ctrl+逗号：打开分类设置窗口。
                 会话列表中按 Shift+F10 打开操作菜单。Ctrl+Shift+A 归档所选会话，Ctrl+Shift+H 打开本地归档。
                 项目、会话或归档列表中按 Delete 打开移除确认。项目文件和官方会话均保留。
                 默认 Ctrl+Enter 发送，Enter 换行。可在常规设置中交换。Ctrl+Shift+X 中止任务。
@@ -184,19 +193,24 @@ internal sealed partial class MainForm : Form
         left.Controls.Add(Buttons(3, openSession), 0, 5);
         area.Controls.Add(left, 0, 1);
 
-        var right = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, TabIndex = 1 };
+        var right = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 7, TabIndex = 1 };
         right.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        right.RowStyles.Add(new RowStyle(SizeType.Percent, 78));
+        right.RowStyles.Add(new RowStyle(SizeType.Percent, 57));
         right.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        right.RowStyles.Add(new RowStyle(SizeType.Percent, 22));
+        right.RowStyles.Add(new RowStyle(SizeType.Percent, 20));
+        right.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        right.RowStyles.Add(new RowStyle(SizeType.Percent, 23));
         right.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         messages.TabIndex = 0;
-        input.TabIndex = 1;
+        recentActivity.TabIndex = 1;
+        input.TabIndex = 2;
         right.Controls.Add(Caption("消息列表"), 0, 0);
         right.Controls.Add(messages, 0, 1);
-        right.Controls.Add(inputCaption, 0, 2);
-        right.Controls.Add(input, 0, 3);
-        right.Controls.Add(Buttons(2, send, steer, cancel, showOptions, imageButton, textAttachmentsButton), 0, 4);
+        right.Controls.Add(Caption("实时活动"), 0, 2);
+        right.Controls.Add(recentActivity, 0, 3);
+        right.Controls.Add(inputCaption, 0, 4);
+        right.Controls.Add(input, 0, 5);
+        right.Controls.Add(Buttons(3, send, steer, cancel, showOptions, imageButton, textAttachmentsButton), 0, 6);
         area.Controls.Add(right, 1, 1);
 
         var footer = new TableLayoutPanel
@@ -209,7 +223,7 @@ internal sealed partial class MainForm : Form
         status.AutoSize = true;
         status.Margin = new Padding(3, 4, 3, 4);
         footer.Controls.Add(status, 0, 0);
-        var footerButtons = Buttons(0, showStatus, showLog, showDiff);
+        var footerButtons = Buttons(0, openSettings, showStatus, showLog, showDiff);
         footerButtons.WrapContents = false;
         footer.Controls.Add(footerButtons, 0, 1);
         area.Controls.Add(footer, 0, 2);
@@ -251,7 +265,7 @@ internal sealed partial class MainForm : Form
     {
         if (keys is Keys.F6 or (Keys.F6 | Keys.Shift))
         {
-            Control[] targets = [projects, sessions, messages, input, showStatus];
+            Control[] targets = [projects, sessions, messages, recentActivity, input, showStatus];
             int current = Array.FindIndex(targets, control => control.ContainsFocus);
             int next = current < 0
                 ? (keys == Keys.F6 ? 0 : targets.Length - 1)
@@ -287,6 +301,12 @@ internal sealed partial class MainForm : Form
         if (keys == Keys.Enter && sessions.Focused)
         {
             _ = RestoreSelectedAsync();
+            return true;
+        }
+        if (keys == Keys.Enter && recentActivity.Focused)
+        {
+            if (recentActivity.SelectedItem is ActivityRecord entry)
+                Dialogs.Text(this, entry.Summary, entry.Detail);
             return true;
         }
         if (messages.Focused)

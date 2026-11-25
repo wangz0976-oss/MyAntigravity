@@ -221,6 +221,7 @@ internal sealed partial class MainForm
             activeTitles.Clear();
             ClearConversation();
             activity.Clear();
+            recentActivity.Items.Clear();
             context.Text = "当前项目：未选择";
             PopulateSessions();
         }

@@ -828,13 +828,34 @@ await Case("ACP 图片能力、纯图片消息、混合消息和大小限制", a
     await ThrowsAsync<InvalidOperationException>(() => unsupported.PromptAsync(id, "", [png]));
 });
 
+await Case("项目与会话启动恢复兼容旧数据，跳过归档与失效路径", () =>
+{
+    var first = Directory.CreateDirectory(Path.Combine(scratch, "启动项目甲")).FullName;
+    var second = Directory.CreateDirectory(Path.Combine(scratch, "启动项目乙")).FullName;
+    var missing = Path.Combine(scratch, "已移走项目");
+    var preferences = new LocalSettings { Projects = [missing, first, second] };
+    preferences.RememberSession("old", first, DateTimeOffset.UnixEpoch);
+    preferences.RememberSession("new", first, DateTimeOffset.UnixEpoch.AddDays(1));
+    preferences.RememberSession("other", second, DateTimeOffset.UnixEpoch.AddDays(2));
+    Check(preferences.StartupWorkspace() == (first, "new"), "旧版记录回到最近有效项目和最新会话");
+    preferences.LastProject = second;
+    preferences.LastSession = "other";
+    Check(preferences.StartupWorkspace() == (second, "other"), "优先恢复精确的项目和会话");
+    preferences.SetSessionArchived("other", second, true);
+    Check(preferences.StartupWorkspace() == (second, (string?)null), "跳过归档会话");
+    preferences.RestoreSessionOnStartup = false;
+    preferences.LastProject = missing;
+    Check(preferences.StartupWorkspace() == (first, (string?)null), "关闭自动恢复后仍加载本机历史所属项目");
+    return Task.CompletedTask;
+});
+
 await Case("单次允许、拒绝默认、取消在途审批", async () =>
 {
     var approvalStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var inviteCount = 0;
     await using var client = StartFixture(async (request, token) =>
     {
-        Check(request.Options.All(offer => offer.Kind != "allow_always"), "过滤永久许可");
+        Check(request.Options.Single(offer => offer.Kind == "allow_always").Id == "allow-all", "保留官方提供的记住决定选项");
         Check(request.Description.Contains("src/测试.cs") && request.Reject() == "deny", "可读的实际审批详情");
         int invite = Interlocked.Increment(ref inviteCount);
         if (invite == 1)

@@ -53,6 +53,7 @@ internal sealed partial class MainForm
 
     private void FlushStreamingActivity()
     {
+        RefreshRecentActivity();
         if (reasoningChanged && currentReasoning is { } record)
         {
             reasoningChanged = false;

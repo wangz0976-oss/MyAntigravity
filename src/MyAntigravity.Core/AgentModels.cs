@@ -66,13 +66,14 @@ public sealed record PermissionOffer(string Id, string Name, string Kind)
         var scope = Kind switch
         {
             "allow_once" => "仅本次允许",
+            "allow_always" => "记住此类允许",
             "reject_once" => "仅本次拒绝",
             "reject_always" => "始终拒绝",
             _ => null
         };
         if (scope is null)
             return AgentText.Visible(Name);
-        if (Name is "Allow" or "Reject" or "Deny" or "Allow once" or "Reject once" or "Always reject")
+        if (Name is "Allow" or "Reject" or "Deny" or "Allow once" or "Always allow" or "Allow always" or "Reject once" or "Always reject")
             return scope;
         return $"{AgentText.Visible(Name)}（{scope}）";
     }
@@ -85,7 +86,7 @@ public sealed record PermissionRequest(string SessionId, string Description, IRe
     public static PermissionRequest Parse(JsonElement parameters) => new(parameters.Text("sessionId") ?? "",
         AgentText.ToolDetails(parameters.Field("toolCall")),
         parameters.Field("options").Items().Where(value =>
-            value.Text("optionId") is not null && value.Text("kind") is "allow_once" or "reject_once" or "reject_always")
+            value.Text("optionId") is not null && value.Text("kind") is "allow_once" or "allow_always" or "reject_once" or "reject_always")
             .Select(value => new PermissionOffer(value.Text("optionId")!, value.Text("name") ?? "审批选项",
                 value.Text("kind")!)).ToArray())
         { Changes = AgentText.Changes(parameters.Field("toolCall")).ToArray() };

@@ -147,10 +147,22 @@ internal static partial class Dialogs
         string? selected = null;
         foreach (var option in request.Options.Where(option => option.Kind != "reject_once"))
         {
-            var label = option.Kind == "allow_once" ? "允许本次 (&Y)" : "始终拒绝 (&D)";
+            var label = option.Kind switch
+            {
+                "allow_once" => "允许本次 (&Y)",
+                "allow_always" => "记住此类允许 (&A)",
+                _ => "始终拒绝 (&D)"
+            };
             var choice = new Button { Text = label, AutoSize = true };
             choice.Click += (_, _) =>
             {
+                if (option.Kind == "allow_always" && MessageBox.Show(form,
+                    $"官方选项：{AgentText.Visible(option.Name)}\n\n以后适用的操作与范围由官方 CLI 决定。要保存这次允许决定吗？",
+                    "确认记住允许决定", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning,
+                    MessageBoxDefaultButton.Button2) != DialogResult.OK)
+                    return;
+                if (cancellation.IsCancellationRequested)
+                    return;
                 selected = option.Id;
                 form.Close();
             };

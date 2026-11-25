@@ -42,6 +42,15 @@ internal sealed partial class MainForm : Form
         BuildUi();
         WireCommands();
         UpdateLiveSetting();
+        var startupWorkspace = settings.StartupWorkspace();
+        if (startupWorkspace is { } workspace)
+        {
+            project = workspace.Project;
+            context.Text = $"当前项目：{project}";
+            SwitchDraft(null);
+            PopulateSessions(workspace.Session);
+            SetStatus("已打开上次使用的项目。", record: false);
+        }
         ReloadProjects();
         UpdateCommands();
         workspaceSave.Tick += (_, _) => FlushWorkspace();
@@ -50,12 +59,17 @@ internal sealed partial class MainForm : Form
         {
             if (loadError is not null)
                 ReportError(loadError);
-            if (projects.Items.Count > 0)
+            if (sessions.Items.Count > 0)
+                sessions.Focus();
+            else if (projects.Items.Count > 0)
                 projects.Focus();
             else
                 addProject.Focus();
             if (!closing && loadError is null)
                 OfferCliSetupAtStartup();
+            if (!closing && startupWorkspace?.Session is { } last && sessionId is null &&
+                LocalSettings.PathEquals(project ?? "", startupWorkspace.Value.Project))
+                await RunAsync(() => StartSessionCoreAsync(last, focusComposer: false), startupRestore: true);
             if (!closing)
                 await CheckStartupUpdateAsync(new Updates(updateHttp, dataDirectory), Program.Version);
         };
@@ -100,6 +114,8 @@ internal sealed partial class MainForm : Form
         terminalLogin.Click += async (_, _) => await RunAsync(TerminalLoginAsync);
         detect.Click += async (_, _) => await RunAsync(DetectCliAsync);
         settingsMenu.Click += async (_, _) => await RunAsync(EditSettingsAsync);
+        openSettings.Click += async (_, _) => await RunAsync(EditSettingsAsync);
+        recentActivity.Leave += (_, _) => Post(RefreshRecentActivity);
         sessionDefaultsMenu.Click += async (_, _) => await ManageSessionDefaultsAsync();
         updatesMenu.Click += async (_, _) => await RunAsync(ShowUpdatesAsync);
         extensionHub.Click += async (_, _) => await ShowExtensionHubAsync();
@@ -139,7 +155,7 @@ internal sealed partial class MainForm : Form
         await RefreshSessionsAsync();
     });
 
-    private async Task RunAsync(Func<Task> operation)
+    private async Task RunAsync(Func<Task> operation, bool startupRestore = false)
     {
         if (busy || closing)
             return;
@@ -150,18 +166,25 @@ internal sealed partial class MainForm : Form
         catch (AcpException error) when (error.RequiresAuthentication)
         {
             RecordAccountVerification(connectedExecutable, true);
-            ReportError("需要登录 Google。请从“账户”菜单选择“用浏览器登录 Google”。");
+            if (startupRestore)
+                SetStatus("恢复会话需先登录 Google。", kind: TaskActivityKind.Failure);
+            else
+                ReportError("需要登录 Google。请从“账户”菜单选择“用浏览器登录 Google”。");
         }
         catch (CliSetupException error)
         {
-            if (!closing)
+            if (!closing && !startupRestore)
                 ShowCliGuide(error.Message);
+            else if (!closing)
+                SetStatus("安装官方 CLI 后可从历史列表恢复会话。", kind: TaskActivityKind.Failure);
         }
         catch (Exception error) when (error is IOException or AcpException or InvalidOperationException or
             TimeoutException or System.ComponentModel.Win32Exception or UnauthorizedAccessException or ArgumentException or
             HttpRequestException or JsonException or FormatException or OperationCanceledException)
         {
-            if (!closing)
+            if (!closing && startupRestore)
+                SetStatus($"未能恢复上次会话：{AgentText.Visible(error.Message)}", kind: TaskActivityKind.Failure);
+            else if (!closing)
                 ReportError(error.Message);
         }
         finally
@@ -175,7 +198,7 @@ internal sealed partial class MainForm : Form
     private void UpdateCommands()
     {
         var idle = !busy && !closing;
-        addProject.Enabled = chooseProject.Enabled = settingsMenu.Enabled = sessionDefaultsMenu.Enabled = updatesMenu.Enabled = extensionHub.Enabled =
+        addProject.Enabled = chooseProject.Enabled = settingsMenu.Enabled = openSettings.Enabled = sessionDefaultsMenu.Enabled = updatesMenu.Enabled = extensionHub.Enabled =
             browserLogin.Enabled = terminalLogin.Enabled = detect.Enabled = idle;
         openProject.Enabled = openProjectMenu.Enabled = projectExplorer.Enabled = copyProjectPath.Enabled =
             removeProject.Enabled = idle && projects.SelectedItem is string;
@@ -226,7 +249,10 @@ internal sealed partial class MainForm : Form
         activeTitles.Clear();
         ClearConversation();
         activity.Clear();
+        recentActivity.Items.Clear();
         settings.RememberProject(fullPath);
+        settings.LastProject = fullPath;
+        settings.LastSession = null;
         ReloadProjects();
         PopulateSessions();
         context.Text = $"当前项目：{project}";
@@ -473,7 +499,7 @@ internal sealed partial class MainForm : Form
         SetStatus(requested is null ? "会话已创建。" + modeStatus
             : current.CanReplay ? positioned ? "历史会话已恢复，已定位到上次阅读位置。" : "历史会话已恢复。"
             : "会话已恢复，当前 CLI 不回放历史消息。");
-        if (requested is not null && current.CanReplay && messages.Items.Count > 0)
+        if (focusComposer && requested is not null && current.CanReplay && messages.Items.Count > 0)
             messages.Focus();
         else if (focusComposer)
             input.Focus();
@@ -549,7 +575,7 @@ internal sealed partial class MainForm : Form
                     return;
                 lastTurnUsage = SessionUsage.LastTurn(result);
                 if (reason == "cancelled")
-                    SetStatus("任务已中止。", speak: true);
+                    SetStatus(cancelRequested ? "任务已中止。" : "官方 CLI 结束了本轮。按 Ctrl+L 查看任务记录。", speak: true);
                 else if (reason == "end_turn")
                 {
                     bool spoken = settings.AutoReadReply &&
@@ -628,6 +654,8 @@ internal sealed partial class MainForm : Form
         if (sessionId is null || project is null)
             return;
         settings.RememberSession(sessionId, project);
+        settings.LastProject = project;
+        settings.LastSession = sessionId;
         try { storage.Save(settings); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -640,10 +668,12 @@ internal sealed partial class MainForm : Form
         {
             Log(request.Description, "等待工具审批", TaskActivityKind.Interaction);
             SetStatus("Agent 请求工具审批。请查看详情。", record: false, speak: true);
+            var wait = Stopwatch.StartNew();
             var selected = Dialogs.Permission(Form.ActiveForm ?? this, request, cancellation, RequestCancellationAsync);
             var outcome = cancellation.IsCancellationRequested ? null : request.Options.FirstOrDefault(item => item.Id == selected);
-            string summary = "审批结果：" + (outcome?.ToString() ?? "已取消");
-            Log($"{summary}\n\n{request.Description}", summary, TaskActivityKind.Interaction);
+            string summary = "审批结果：" + (outcome?.ToString() ??
+                (cancelRequested ? "已请求中止" : cancellation.IsCancellationRequested ? "CLI 已结束等待" : "已取消"));
+            Log($"{summary}\n等待约 {wait.Elapsed.TotalSeconds:0} 秒。\n\n{request.Description}", summary, TaskActivityKind.Interaction);
             if (!cancellation.IsCancellationRequested)
                 SetStatus("审批已提交，等待 Agent 继续。", kind: TaskActivityKind.Interaction);
             return outcome?.Id;

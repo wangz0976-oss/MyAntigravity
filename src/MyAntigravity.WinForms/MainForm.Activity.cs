@@ -5,6 +5,26 @@ internal sealed partial class MainForm
     private readonly List<ActivityRecord> activity = [];
     private event Action<ActivityRecord>? ActivityRecorded;
     private event Action<ActivityRecord>? ActivityUpdated;
+    private bool recentActivityDirty;
+
+    private void RefreshRecentActivity()
+    {
+        if (!recentActivityDirty || recentActivity.Focused)
+            return;
+        recentActivityDirty = false;
+        var selection = recentActivity.SelectedItem;
+        recentActivity.BeginUpdate();
+        try
+        {
+            recentActivity.Items.Clear();
+            recentActivity.Items.AddRange(activity.TakeLast(12).Cast<object>().ToArray());
+            if (selection is not null)
+                recentActivity.SelectedItem = selection;
+            if (recentActivity.SelectedIndex < 0 && recentActivity.Items.Count > 0)
+                recentActivity.SelectedIndex = recentActivity.Items.Count - 1;
+        }
+        finally { recentActivity.EndUpdate(); }
+    }
 
     private ActivityRecord Log(string text, string? summary = null, TaskActivityKind kind = TaskActivityKind.General)
     {
@@ -16,6 +36,8 @@ internal sealed partial class MainForm
         string caption = firstLine.Length <= maximum ? firstLine.ToString() : firstLine[..maximum].ToString() + "…";
         var entry = new ActivityRecord(sessionId, DateTimeOffset.Now, caption, text, kind);
         activity.Add(entry);
+        recentActivityDirty = true;
+        messageRefresh.Start();
         ActivityRecorded?.Invoke(entry);
         return entry;
     }

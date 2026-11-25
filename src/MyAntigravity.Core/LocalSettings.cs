@@ -24,6 +24,9 @@ public sealed class LocalSettings
     public bool Sandbox { get; set; }
     public string UpdateChannel { get; set; } = "beta";
     public bool CheckUpdatesOnStartup { get; set; } = true;
+    public bool RestoreSessionOnStartup { get; set; } = true;
+    public string? LastProject { get; set; }
+    public string? LastSession { get; set; }
     public SessionDefaults? NewSessionDefaults { get; set; }
     public AccountVerification? LastAccountVerification { get; set; }
     public List<string> Projects { get; set; } = [];
@@ -176,6 +179,25 @@ public sealed class LocalSettings
         .ThenByDescending(record => record.Updated)
         .ThenBy(record => record.Directory, StringComparer.OrdinalIgnoreCase)
         .ThenBy(record => record.Id, StringComparer.Ordinal).ToArray();
+
+    public (string Project, string? Session)? StartupWorkspace()
+    {
+        string? project = LastProject is { } previous
+            ? Projects.FirstOrDefault(path => PathEquals(path, previous) && Directory.Exists(path)) : null;
+        project ??= Projects.FirstOrDefault(path => Path.IsPathFullyQualified(path) && Directory.Exists(path));
+        if (project is null)
+            return null;
+        string? session = null;
+        if (RestoreSessionOnStartup)
+        {
+            var recent = Sessions.Where(item => PathEquals(item.Directory, project) && !item.Archived &&
+                !IsSessionRemoved(item.Id, project));
+            session = LastProject is { } last && PathEquals(last, project)
+                ? recent.FirstOrDefault(item => item.Id == LastSession)?.Id
+                : recent.OrderByDescending(item => item.Updated).FirstOrDefault()?.Id;
+        }
+        return (project, session);
+    }
 
     public static string ProjectPath(string path)
     {
