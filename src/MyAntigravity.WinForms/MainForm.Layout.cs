@@ -42,6 +42,7 @@ internal sealed partial class MainForm : Form
     private readonly ToolStripMenuItem commandPalette = Item("插入官方命令 (&P)", Keys.Control | Keys.Shift | Keys.P);
     private readonly ToolStripMenuItem sendMessageMenu = Item("发送消息 (&S)");
     private readonly ToolStripMenuItem settingsMenu = Item("常规设置 (&S)");
+    private readonly ToolStripMenuItem sessionDefaultsMenu = Item("新会话默认 (&N)");
     private readonly ToolStripMenuItem updatesMenu = Item("检查更新 (&U)");
     private readonly ToolStripMenuItem extensionHub = Item("规则、技能、MCP 与插件 (&E)", Keys.Control | Keys.F9);
     private readonly ToolStripMenuItem detect = Item("检测 CLI 版本 (&V)");
@@ -106,7 +107,7 @@ internal sealed partial class MainForm : Form
                 return Task.CompletedTask;
             })]);
         var preferencesMenu = Item("设置 (&S)");
-        preferencesMenu.DropDownItems.AddRange([settingsMenu, extensionHub, updatesMenu]);
+        preferencesMenu.DropDownItems.AddRange([settingsMenu, sessionDefaultsMenu, extensionHub, updatesMenu]);
         var help = Item("帮助 (&H)");
         help.DropDownItems.Add(Item("查看说明 (&M)", action: ShowUserGuideAsync));
         help.DropDownItems.Add(Item("查看更新日志 (&U)", action: ShowCurrentChangelogAsync));

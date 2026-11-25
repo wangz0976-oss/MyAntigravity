@@ -734,6 +734,43 @@ await Case("ACP 统一提交会话设置，按模型刷新后验证推理等级"
         ReferenceEquals(stopped.Options, options), "子请求失败后保留最后确认状态及原因");
 });
 
+await Case("跨重启记住新会话模式、模型和推理，缺少官方选项时安全回退", async () =>
+{
+    var folder = Directory.CreateDirectory(Path.Combine(scratch, "新会话默认-" + Guid.NewGuid().ToString("N"))).FullName;
+    var store = new SettingsFile(folder);
+    Check(store.Load().NewSessionDefaults is null, "首次启动沿用官方值");
+    var preferred = new SessionDefaults("auto", "second-model", "high");
+    store.Save(new LocalSettings { NewSessionDefaults = preferred });
+    var restored = new SettingsFile(folder).Load().NewSessionDefaults!;
+    Check(restored == preferred, "跨重启恢复独立的默认偏好");
+
+    await using var client = StartFixture((_, _) => Task.FromResult<string?>(null), streaming: true);
+    await client.InitializeAsync("0.1.0");
+    for (int round = 0; round < 2; round++)
+    {
+        var opened = await client.NewSessionAsync();
+        var options = SessionOption.Parse(opened);
+        Check(SessionDefaults.ConfirmedValue(options, "mode") == "default", "CLI 每次都从官方默认开始");
+        var applied = await client.ApplySettingsAsync(Value(opened, "sessionId"), options, restored.Changes());
+        Check(applied.Problems.Count == 0 && applied.Applied.Count == 3 &&
+            SessionDefaults.ConfirmedValue(applied.Options, "mode") == "auto" &&
+            SessionDefaults.ConfirmedValue(applied.Options, "model") == "second-model" &&
+            SessionDefaults.ConfirmedValue(applied.Options, "thought_level") == "high", "新会话复用三个官方值");
+    }
+    SessionOption[] restricted =
+    [
+        new("m", "模型", null, "model", "other", [new("other", "Other", null)], "session/set_config_option"),
+        new("preset", "权限", null, "mode", "default", [new("default", "默认", null)], "session/set_mode"),
+        new("effort", "推理", null, "thought_level", "low", [new("low", "低", null), new("high", "高", null)], "session/set_config_option")
+    ];
+    var unchanged = await SessionSettings.ApplyAsync(restricted, restored.Changes(), (_, _) =>
+        throw new InvalidOperationException("不应提交未通告的模式或者不同模型的推理等级。"));
+    Check(unchanged.Applied.Count == 0 && unchanged.Problems.Count == 3 &&
+        unchanged.Problems.Any(problem => problem.Contains("当前模型")), "不可用的值不发给 CLI，可独立清除两组偏好");
+    Check((preferred with { Mode = null }).Changes().All(change => change.Category != "mode") &&
+        (preferred with { Model = null, Reasoning = null }).Changes() is [{ Category: "mode" }], "分别清除权限或模型组");
+});
+
 await Case("ACP 正文、推理和工具交错，保留稳定的生成中条目", async () =>
 {
     await using var client = StartFixture((_, _) => Task.FromResult<string?>(null), streaming: true);

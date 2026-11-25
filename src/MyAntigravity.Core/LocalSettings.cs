@@ -24,6 +24,7 @@ public sealed class LocalSettings
     public bool Sandbox { get; set; }
     public string UpdateChannel { get; set; } = "beta";
     public bool CheckUpdatesOnStartup { get; set; } = true;
+    public SessionDefaults? NewSessionDefaults { get; set; }
     public AccountVerification? LastAccountVerification { get; set; }
     public List<string> Projects { get; set; } = [];
     public List<LocalSession> Sessions { get; set; } = [];

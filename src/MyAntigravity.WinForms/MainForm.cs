@@ -100,6 +100,7 @@ internal sealed partial class MainForm : Form
         terminalLogin.Click += async (_, _) => await RunAsync(TerminalLoginAsync);
         detect.Click += async (_, _) => await RunAsync(DetectCliAsync);
         settingsMenu.Click += async (_, _) => await RunAsync(EditSettingsAsync);
+        sessionDefaultsMenu.Click += async (_, _) => await ManageSessionDefaultsAsync();
         updatesMenu.Click += async (_, _) => await RunAsync(ShowUpdatesAsync);
         extensionHub.Click += async (_, _) => await ShowExtensionHubAsync();
         send.Click += async (_, _) => await SendAsync();
@@ -174,7 +175,7 @@ internal sealed partial class MainForm : Form
     private void UpdateCommands()
     {
         var idle = !busy && !closing;
-        addProject.Enabled = chooseProject.Enabled = settingsMenu.Enabled = updatesMenu.Enabled = extensionHub.Enabled =
+        addProject.Enabled = chooseProject.Enabled = settingsMenu.Enabled = sessionDefaultsMenu.Enabled = updatesMenu.Enabled = extensionHub.Enabled =
             browserLogin.Enabled = terminalLogin.Enabled = detect.Enabled = idle;
         openProject.Enabled = openProjectMenu.Enabled = projectExplorer.Enabled = copyProjectPath.Enabled =
             removeProject.Enabled = idle && projects.SelectedItem is string;
@@ -460,13 +461,16 @@ internal sealed partial class MainForm : Form
         }
         finally { pendingSessionMetadata = null; }
 
+        var modeStatus = requested is null ? await ApplyNewSessionDefaultsAsync(current, sessionId) : "";
+        if (closing || sessionId is null || !ReferenceEquals(agent, current) || !current.Connected)
+            return;
         SwitchDraft(sessionId);
         RememberActive();
         PopulateSessions(sessionId);
         transcript.EndChunks();
         RenderMessages();
         bool positioned = RestoreReadingPosition();
-        SetStatus(requested is null ? "会话已创建。可从“消息”菜单发送。"
+        SetStatus(requested is null ? "会话已创建。" + modeStatus
             : current.CanReplay ? positioned ? "历史会话已恢复，已定位到上次阅读位置。" : "历史会话已恢复。"
             : "会话已恢复，当前 CLI 不回放历史消息。");
         if (requested is not null && current.CanReplay && messages.Items.Count > 0)
@@ -594,23 +598,27 @@ internal sealed partial class MainForm : Form
     {
         if (sessionId is not { } session || agent is not { Connected: true } current || options.Count == 0)
             return;
-        if (Dialogs.SessionSettings(this, options) is not { Count: > 0 } selected ||
+        if (Dialogs.SessionSettings(this, options) is not { } selected ||
             sessionId != session || !ReferenceEquals(agent, current))
             return;
-        var result = await current.ApplySettingsAsync(session, options, selected);
+        var result = await current.ApplySettingsAsync(session, options, selected.Changes);
         if (closing || sessionId != session || !ReferenceEquals(agent, current))
             return;
         options = result.Options;
-        if (result.Problems.Count == 0)
+        var problems = result.Problems.ToList();
+        var remembered = RememberSessionDefaults(selected.Defaults, problems);
+        if (problems.Count == 0)
         {
             if (result.Applied.Count != 0)
-                SetStatus(AgentText.Visible($"已应用设置。{string.Join("；", result.Applied)}"));
+                SetStatus(AgentText.Visible($"已应用设置。{string.Join("、", result.Applied)}。{remembered}"));
+            else if (remembered is not null)
+                SetStatus(remembered);
             return;
         }
 
         var applied = result.Applied.Count == 0 ? "本次没有确认生效的改动。"
             : "已应用：\n" + string.Join("\n", result.Applied);
-        var report = AgentText.Visible($"{applied}\n\n请核对：\n{string.Join("\n", result.Problems)}");
+        var report = AgentText.Visible($"{applied}\n{remembered}\n\n请核对：\n{string.Join("\n", problems)}");
         Log(report, "会话设置未全部应用", TaskActivityKind.Failure);
         Dialogs.Text(this, "会话设置应用结果", report);
     });
@@ -834,7 +842,11 @@ internal sealed partial class MainForm : Form
     private Task ShowStatusAsync()
     {
         string[] lines = sessionId is null ? [context.Text, status.Text]
-            : [context.Text, status.Text, contextUsage ?? "上下文用量：官方 CLI 暂未报告。",
+            : [context.Text, status.Text,
+                $"模型：{AgentText.Visible(SessionDefaults.CurrentName(options, "model") ?? "未报告")}",
+                $"权限模式：{AgentText.Visible(SessionDefaults.CurrentName(options, "mode") ?? "未报告")}",
+                $"推理等级：{AgentText.Visible(SessionDefaults.CurrentName(options, "thought_level") ?? "未报告")}",
+                contextUsage ?? "上下文用量：官方 CLI 暂未报告。",
                 lastTurnUsage ?? "最近一轮 token：官方 CLI 暂未报告。"];
         Dialogs.Text(this, "当前状态", string.Join("\n", lines));
         return Task.CompletedTask;

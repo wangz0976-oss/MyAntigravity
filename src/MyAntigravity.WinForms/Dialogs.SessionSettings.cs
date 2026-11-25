@@ -2,15 +2,17 @@ namespace MyAntigravity;
 
 internal static partial class Dialogs
 {
-    internal static IReadOnlyList<SessionSettingChange>? SessionSettings(Form owner, IReadOnlyList<SessionOption> options)
+    internal sealed record SessionSettingsSelection(IReadOnlyList<SessionSettingChange> Changes, SessionDefaults Defaults);
+
+    internal static SessionSettingsSelection? SessionSettings(Form owner, IReadOnlyList<SessionOption> options)
     {
-        using var form = Window("模型、权限模式与推理设置", new Size(690, 510));
+        using var form = Window("模型、权限模式与推理设置", new Size(690, 555));
         var optionsPanel = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1 };
         optionsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true, TabIndex = 0 };
         scroll.Controls.Add(optionsPanel);
         var details = MainForm.ReadableText("选项说明");
-        details.TabIndex = 1;
+        details.TabIndex = 3;
         var inputs = new List<(SessionOption Option, ComboBox Values)>();
 
         void AddField(string label, SessionOption? option, string? unavailable = null)
@@ -57,15 +59,23 @@ internal static partial class Dialogs
         foreach (var option in options.Where(option => !inputs.Any(input => input.Option.Id == option.Id)).ToArray())
             AddField(AgentText.Visible(option.Label), option);
 
-        var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4 };
+        var rememberMode = new CheckBox { Text = "把所选权限模式设为新会话默认 (&P)", AutoSize = true, TabIndex = 1,
+            Enabled = inputs.Any(input => input.Option.Category == "mode") };
+        var rememberModel = new CheckBox { Text = "把所选模型和推理等级设为新会话默认 (&N)", AutoSize = true, TabIndex = 2,
+            Enabled = inputs.Any(input => input.Option.Category == "model") };
+        var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6 };
         body.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         body.RowStyles.Add(new RowStyle(SizeType.Percent, 60));
+        body.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        body.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         body.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         body.RowStyles.Add(new RowStyle(SizeType.Percent, 40));
         body.Controls.Add(MainForm.Caption("更换模型后会核对推理等级，选完按回车统一应用。"), 0, 0);
         body.Controls.Add(scroll, 0, 1);
-        body.Controls.Add(MainForm.Caption("选项说明"), 0, 2);
-        body.Controls.Add(details, 0, 3);
+        body.Controls.Add(rememberMode, 0, 2);
+        body.Controls.Add(rememberModel, 0, 3);
+        body.Controls.Add(MainForm.Caption("选项说明"), 0, 4);
+        body.Controls.Add(details, 0, 5);
         var apply = new Button { Text = "确定 (&A)", AutoSize = true, DialogResult = DialogResult.OK };
         var close = new Button { Text = "取消 (&C)", AutoSize = true, DialogResult = DialogResult.Cancel };
         form.AcceptButton = apply;
@@ -75,8 +85,12 @@ internal static partial class Dialogs
         if (form.ShowDialog(owner) != DialogResult.OK)
             return null;
 
-        return inputs.Select(input => (input.Option, Choice: input.Values.SelectedItem as Choice))
+        var selected = inputs.Select(input => (input.Option, Choice: input.Values.SelectedItem as Choice)).ToArray();
+        string? Value(string category) => selected.FirstOrDefault(input => input.Option.Category == category).Choice?.Id;
+        var changes = selected
             .Where(input => input.Choice is not null && input.Option.Current != input.Choice.Id)
             .Select(input => new SessionSettingChange(input.Option.Id, input.Choice!.Id, input.Option.Label)).ToArray();
+        return new(changes, new SessionDefaults(rememberMode.Checked ? Value("mode") : null,
+            rememberModel.Checked ? Value("model") : null, rememberModel.Checked ? Value("thought_level") : null));
     }
 }

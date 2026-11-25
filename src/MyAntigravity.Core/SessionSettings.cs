@@ -1,6 +1,7 @@
 namespace MyAntigravity;
 
-public sealed record SessionSettingChange(string OptionId, string Value, string Label);
+public sealed record SessionSettingChange(string? OptionId, string Value, string Label, string? Category = null,
+    string? RequiredModel = null);
 
 public sealed record SessionSettingsResult(IReadOnlyList<SessionOption> Options, IReadOnlyList<string> Applied,
     IReadOnlyList<string> Problems);
@@ -15,7 +16,13 @@ public static class SessionSettings
         var problems = new List<string>();
         foreach (var change in changes)
         {
-            var option = options.FirstOrDefault(item => item.Id == change.OptionId);
+            if (change.RequiredModel is { } model && SessionDefaults.ConfirmedValue(options, "model") != model)
+            {
+                problems.Add($"{change.Label}：当前模型与已保存的模型不同，已沿用此模型的推理设置。");
+                continue;
+            }
+            var option = options.FirstOrDefault(item => change.Category is { } category
+                ? item.Category == category : item.Id == change.OptionId);
             var choice = option?.Choices.FirstOrDefault(item => item.Id == change.Value);
             if (option is null || choice is null)
             {

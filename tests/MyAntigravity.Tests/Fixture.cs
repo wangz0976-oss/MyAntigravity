@@ -112,6 +112,12 @@ internal static class Fixture
                 case "session/new":
                     if (parameters.GetProperty("cwd").GetString() != cwd)
                         throw new InvalidOperationException("创建会话时 ACP 工作目录和 CLI 进程目录不一致。");
+                    if (streaming)
+                    {
+                        modelValue = "first-model";
+                        modeValue = "default";
+                        reasoningValue = "low";
+                    }
                     if (rich)
                         CheckDirectories(parameters);
                     if (account is not null)
@@ -148,10 +154,10 @@ internal static class Fixture
                                 modelValue = configValue;
                                 reasoningValue = "low";
                                 break;
-                            case ("mode", "accept-edits") when modelValue == "second-model":
+                            case ("mode", "accept-edits" or "auto") when modelValue == "second-model":
                                 modeValue = configValue;
                                 break;
-                            case ("thought_level", "high") when modelValue == "second-model" && modeValue == "accept-edits":
+                            case ("thought_level", "high") when modelValue == "second-model" && modeValue is "accept-edits" or "auto":
                                 reasoningValue = configValue;
                                 break;
                             default: throw new InvalidOperationException("未按模型变化后的选项提交设置。");
@@ -311,7 +317,7 @@ internal static class Fixture
             var items = new List<object>
             {
                 Entry("model", modelValue, "first-model", "second-model", "plain-model"),
-                Entry("mode", modeValue, "default", "accept-edits")
+                Entry("mode", modeValue, "default", "accept-edits", "auto")
             };
             if (modelValue != "plain-model")
                 items.Add(Entry("thought_level", reasoningValue, "low", "high"));
