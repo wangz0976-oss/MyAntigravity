@@ -8,6 +8,8 @@
 
 “帮助 → 查看说明”可离线按章节阅读操作手册。“帮助 → 查看更新日志”可回看当前安装版本的改动、菜单和按键。
 
+忘了某个功能在哪时，按 **Ctrl+Shift+K** 或从“帮助 → 查找软件功能”打开搜索。可输入功能名、菜单名或快捷键。按下方向键浏览当前可用项，按回车执行，Esc 返回。
+
 1. 打开 `dist\app\MyAntigravity.exe`。也可以运行 `dist\MyAntigravity-Setup.exe`。首次默认安装到 `%LOCALAPPDATA%\MyAntigravity`，简体中文安装向导可另选路径。“选择附加任务”页可用方向键和空格选择桌面快捷方式、开始菜单快捷方式或安装官方 CLI。当前产物是 Windows x64 版，自带 .NET 运行时。
 2. 启动时缺少 CLI 会打开提示窗口。按 **Alt+A** 可以运行 Google 官方 PowerShell 安装命令，完成后自动检测版本。也可以按 **Alt+P** 复制命令手动执行。需要再次检测时，选择“账户 → 检测 CLI 版本”。自定义位置可在“设置 → 常规设置”选取 `agy.exe`。安装命令和默认路径也见 [Google 官方 Windows CLI 安装指南](https://antigravity.google/docs/getting-started?tab=cli)。
 3. 使用“账户 → 用浏览器登录 Google”，在 Google 页面完成授权后返回。已有官方 CLI 登录状态会自动复用，可以直接新建会话。需要终端授权时选“用官方终端登录”，它运行官方命令 `agy acp --login`。

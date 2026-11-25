@@ -14,7 +14,7 @@ internal static partial class Dialogs
 
     internal static (T? Item, bool Remove) Browse<T>(Form owner, string title, string searchName, string listName,
         string acceptText, IReadOnlyList<T> entries, Func<T, string> searchText, Func<T, string>? describe = null,
-        string? removeText = null, T? initial = null, BrowseFilter<T>? filter = null) where T : class
+        string? removeText = null, T? initial = null, BrowseFilter<T>? filter = null, bool focusSearch = false) where T : class
     {
         using var form = Window(title, new Size(760, 510));
         form.ShowInTaskbar = true;
@@ -155,7 +155,7 @@ internal static partial class Dialogs
         form.AcceptButton = accept;
         Vertical(form, panel, MainForm.Buttons(1, buttons.ToArray()));
         Refresh(initial);
-        form.ActiveControl = matches.Items.Count > 0 ? matches : query;
+        form.ActiveControl = !focusSearch && matches.Items.Count > 0 ? matches : query;
         var result = form.ShowDialog(owner);
         return result is DialogResult.OK or DialogResult.Yes
             ? (matches.SelectedItem as T, result == DialogResult.Yes) : (null, false);

@@ -40,6 +40,7 @@ internal sealed partial class MainForm : Form
     private readonly ToolStripMenuItem removeProject = Item("从项目列表移除 (&D)");
     private readonly ToolStripMenuItem additionalDirectories = Item("附加工作目录 (&W)", Keys.Control | Keys.Shift | Keys.W);
     private readonly ToolStripMenuItem commandPalette = Item("插入官方命令 (&P)", Keys.Control | Keys.Shift | Keys.P);
+    private readonly ToolStripMenuItem commandFinder = Item("查找软件功能 (&F)", Keys.Control | Keys.Shift | Keys.K);
     private readonly ToolStripMenuItem sendMessageMenu = Item("发送消息 (&S)");
     private readonly ToolStripMenuItem settingsMenu = Item("常规设置 (&S)");
     private readonly ToolStripMenuItem sessionDefaultsMenu = Item("新会话默认 (&N)");
@@ -109,6 +110,8 @@ internal sealed partial class MainForm : Form
         var preferencesMenu = Item("设置 (&S)");
         preferencesMenu.DropDownItems.AddRange([settingsMenu, sessionDefaultsMenu, extensionHub, updatesMenu]);
         var help = Item("帮助 (&H)");
+        commandFinder.Click += async (_, _) => await FindApplicationCommandAsync();
+        help.DropDownItems.Add(commandFinder);
         help.DropDownItems.Add(Item("查看说明 (&M)", action: ShowUserGuideAsync));
         help.DropDownItems.Add(Item("查看更新日志 (&U)", action: ShowCurrentChangelogAsync));
         help.DropDownItems.Add(Item("键盘操作 (&K)", action: () =>
@@ -132,6 +135,7 @@ internal sealed partial class MainForm : Form
                 Ctrl+Shift+W：管理当前项目的附加工作目录。
                 Ctrl+N：新建会话。Ctrl+R：刷新历史。Ctrl+H：恢复所选会话。
                 Ctrl+K：查找当前项目的会话。会话列表中按 F2 编辑本地名称。
+                Ctrl+Shift+K：搜索软件功能，按回车直接执行。也可从“帮助”菜单打开。
                 会话列表中按 Shift+F10 打开操作菜单。Ctrl+Shift+A 归档所选会话，Ctrl+Shift+H 打开本地归档。
                 项目、会话或归档列表中按 Delete 打开移除确认。项目文件和官方会话均保留。
                 默认 Ctrl+Enter 发送，Enter 换行。可在常规设置中交换。Ctrl+Shift+X 中止任务。
