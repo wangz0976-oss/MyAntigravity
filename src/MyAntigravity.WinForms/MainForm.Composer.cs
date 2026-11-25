@@ -18,6 +18,8 @@ internal sealed partial class MainForm
     }
 
     private readonly Dictionary<(string Project, string Session), ComposerDraft> savedDrafts = [];
+    private readonly Dictionary<string, ComposerDraft> projectDrafts = new(StringComparer.OrdinalIgnoreCase);
+    private string? draftProject;
     private (string Project, string Session)? draftOwner;
     private ComposerDraft draft = new();
     private bool steering;
@@ -28,10 +30,11 @@ internal sealed partial class MainForm
         (string Project, string Session)? next = project is not null && targetSession is not null
             ? (project, targetSession)
             : null;
-        if (next == draftOwner)
+        bool sameProject = string.Equals(draftProject, project, StringComparison.OrdinalIgnoreCase);
+        if (next == draftOwner && sameProject)
             return;
 
-        var unassignedText = draftOwner is null ? draft.Text : "";
+        ComposerDraft? transfer = null;
         if (draftOwner is { } previous)
         {
             RememberReadingPosition();
@@ -39,15 +42,25 @@ internal sealed partial class MainForm
             if (!draft.IsEmpty && !settings.IsSessionRemoved(previous.Session, previous.Project))
                 savedDrafts[previous] = draft;
         }
+        else if (sameProject || draftProject is null)
+            transfer = draft;
+        else if (!draft.IsEmpty)
+            projectDrafts[draftProject] = draft;
         readingReady = false;
 
         draftOwner = next;
-        draft = next is { } key && savedDrafts.Remove(key, out var existing) ? existing : new ComposerDraft
+        draftProject = project;
+        if (next is { } key)
         {
-            Text = next is { } saved ? settings.FindWorkspace(saved.Session, saved.Project)?.Draft ?? "" : ""
-        };
-        if (unassignedText.Length > 0)
-            draft.Text = draft.Text.Length > 0 ? draft.Text + Environment.NewLine + unassignedText : unassignedText;
+            draft = savedDrafts.Remove(key, out var existing) ? existing : new ComposerDraft
+            {
+                Text = settings.FindWorkspace(key.Session, key.Project)?.Draft ?? ""
+            };
+        }
+        else
+            draft = project is not null && projectDrafts.Remove(project, out var pending) ? pending : transfer ?? new ComposerDraft();
+        if (transfer is { Text.Length: > 0 } && !ReferenceEquals(draft, transfer))
+            draft.Text = draft.Text.Length == 0 ? transfer.Text : draft.Text + Environment.NewLine + transfer.Text;
         RefreshComposer();
     }
 
@@ -60,23 +73,17 @@ internal sealed partial class MainForm
 
     private void UpdateComposerCommands()
     {
-        bool available = !busy && !closing && draftOwner is not null && sessionId is not null &&
-            agent is { Connected: true };
-        send.Enabled = sendMessageMenu.Enabled = available && (!string.IsNullOrWhiteSpace(draft.Text) || draft.HasAttachments) &&
+        bool idleProject = !busy && !closing && project is not null;
+        bool available = idleProject && draftOwner is not null && sessionId is not null && agent is { Connected: true };
+        send.Enabled = sendMessageMenu.Enabled = idleProject && (!string.IsNullOrWhiteSpace(draft.Text) || draft.HasAttachments) &&
             (draft.Images.Count == 0 || agent?.CanSendImages == true) &&
             (draft.TextFiles.Count == 0 || agent?.CanSendTextFiles == true);
         steer.Enabled = steerMenu.Enabled = prompting && !steering && !interactionOpen && !cancelRequested && !closing &&
             sessionId is not null && draftOwner is not null && agent is { Connected: true, CanSteer: true } &&
             !string.IsNullOrWhiteSpace(draft.Text);
-        string sendingKeys = settings.EnterToSend ? "回车发送。Ctrl 加回车换行。" : "Ctrl 加回车发送。回车换行。";
-        var inputHelp = prompting && agent is { CanSteer: true }
-            ? "任务进行中。输入补充文字后，从消息菜单选择追加指令。"
-            : $"{sendingKeys} 可从消息菜单发送或插入官方命令。";
         string captionText = settings.EnterToSend ? "消息输入 · Enter 发送" : "消息输入 · Ctrl+Enter 发送";
         if (inputCaption.Text != captionText)
             inputCaption.Text = captionText;
-        if (input.AccessibleDescription != inputHelp)
-            input.AccessibleDescription = inputHelp;
         imageMenu.Enabled = imageButton.Enabled = available && (agent?.CanSendImages == true || draft.Images.Count > 0);
         var caption = $"图片附件（{draft.Images.Count}）(&I)";
         if (imageButton.Text != caption)

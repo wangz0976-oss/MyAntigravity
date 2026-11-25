@@ -30,7 +30,6 @@ internal static partial class Dialogs
         var body = MainForm.ReadableText(toolResult is null ? "消息正文" : "工具结果详情");
         body.WordWrap = false;
         body.ScrollBars = RichTextBoxScrollBars.Both;
-        body.AccessibleDescription = "按 Alt 加 B 选择代码块，Alt 加 Y 复制代码，Alt 加 L 查看链接，Esc 返回上一级。";
         string rendered = text.ReplaceLineEndings("\n");
         body.Text = rendered;
         body.Select(0, 0);
@@ -43,7 +42,7 @@ internal static partial class Dialogs
         status.LiveSetting = AutomationLiveSetting.Polite;
         var buttons = new List<Button> { code, copy, links };
         if (toolResult is not null)
-            buttons.AddRange(ToolResultActions(form, body, status, toolResult, workspaces ?? []));
+            buttons.AddRange(ToolResultActions(form, status, toolResult, workspaces ?? []));
         buttons.Add(close);
 
         void UpdateCommands()

@@ -132,7 +132,6 @@ internal static partial class Dialogs
             catch (InvalidOperationException) { }
         });
         var details = MainForm.ReadableText("工具、命令和文件修改详情");
-        details.AccessibleDescription = "Tab 浏览审批按钮。回车或 Esc 拒绝。允许本次请用 Alt 加 Y，或聚焦允许按钮后按空格。Ctrl 加 Shift 加 X 中止任务。";
         details.TabIndex = 0;
         details.Text = request.Description;
         details.Select(0, 0);
@@ -144,13 +143,12 @@ internal static partial class Dialogs
             var review = new Button { Text = "逐段审查文件 (&W)", AutoSize = true };
             review.Click += (_, _) => ReviewChanges(form, request.Changes, cancellation);
             buttons.Add(review);
-            details.AccessibleDescription += "Alt 加 W 打开逐段审查。";
         }
         string? selected = null;
         foreach (var option in request.Options.Where(option => option.Kind != "reject_once"))
         {
             var label = option.Kind == "allow_once" ? "允许本次 (&Y)" : "始终拒绝 (&D)";
-            var choice = new Button { Text = label, AccessibleDescription = option.ToString(), AutoSize = true };
+            var choice = new Button { Text = label, AutoSize = true };
             choice.Click += (_, _) =>
             {
                 selected = option.Id;
@@ -170,7 +168,6 @@ internal static partial class Dialogs
                 form.Close();
         };
         form.CancelButton = reject;
-        form.AcceptButton = reject;
         Vertical(form, details, MainForm.Buttons(1, buttons.ToArray()));
         form.ActiveControl = details;
         form.Reject = reject.PerformClick;
@@ -199,8 +196,13 @@ internal static partial class Dialogs
 
         protected override bool ProcessCmdKey(ref Message message, Keys keys)
         {
-            // Enter must stay a refusal even when a different button has focus.
-            if (keys is Keys.Enter or Keys.Escape)
+            if (keys == Keys.Enter)
+            {
+                if (ActiveControl is Button { Enabled: true } button)
+                    button.PerformClick();
+                return true;
+            }
+            if (keys == Keys.Escape)
             {
                 Reject?.Invoke();
                 return true;

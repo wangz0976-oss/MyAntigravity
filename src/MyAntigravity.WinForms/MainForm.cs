@@ -138,12 +138,11 @@ internal sealed partial class MainForm : Form
         await RefreshSessionsAsync();
     });
 
-    private async Task RunAsync(Func<Task> operation, bool isPrompt = false)
+    private async Task RunAsync(Func<Task> operation)
     {
         if (busy || closing)
             return;
         busy = true;
-        prompting = isPrompt;
         cancelRequested = false;
         UpdateCommands();
         try { await operation(); }
@@ -231,8 +230,8 @@ internal sealed partial class MainForm : Form
         PopulateSessions();
         context.Text = $"当前项目：{project}";
         storage.Save(settings);
-        SetStatus("已打开项目。从“会话”菜单新建，或在历史列表打开已有会话。", speak: true);
-        sessions.Focus();
+        SetStatus("项目已打开。发送消息时会创建会话。", speak: true);
+        input.Focus();
     }
 
     private void ReloadProjects()
@@ -252,12 +251,13 @@ internal sealed partial class MainForm : Form
 
     private async Task<AcpAgent> ConnectAsync()
     {
-        if (agent is { Connected: true } existing)
+        var directory = WorkingDirectory();
+        if (agent is { Connected: true } existing && LocalSettings.PathEquals(existing.WorkingDirectory, directory))
             return existing;
 
         await ResetAgentAsync();
         var executable = RequireCli();
-        var current = new AcpAgent(AcpStartInfo(executable, WorkingDirectory()), AskPermissionAsync, AskQuestionAsync);
+        var current = new AcpAgent(AcpStartInfo(executable, directory), AskPermissionAsync, AskQuestionAsync);
         connectedExecutable = executable;
         current.SessionUpdated += (id, data) => Post(() =>
         {
@@ -330,7 +330,7 @@ internal sealed partial class MainForm : Form
     private string WorkingDirectory()
     {
         if (project is not null)
-            return project;
+            return LocalSettings.ProjectPath(project);
         Directory.CreateDirectory(dataDirectory);
         return dataDirectory;
     }
@@ -403,7 +403,7 @@ internal sealed partial class MainForm : Form
 
     private Task StartSessionAsync(string? requested) => RunAsync(() => StartSessionCoreAsync(requested));
 
-    private async Task StartSessionCoreAsync(string? requested)
+    private async Task StartSessionCoreAsync(string? requested, bool focusComposer = true)
     {
         if (project is null)
             return;
@@ -416,6 +416,7 @@ internal sealed partial class MainForm : Form
             return;
         }
         SetStatus(requested is null ? "正在创建会话。" : "正在恢复历史会话。");
+        var directory = LocalSettings.ProjectPath(project);
         var current = await ConnectAsync();
         if (requested is not null && !current.CanRestore)
             throw new InvalidOperationException("当前 CLI 未声明会话恢复能力。");
@@ -447,6 +448,11 @@ internal sealed partial class MainForm : Form
                     ApplyUpdate(update.SessionId, update.Data);
             }
         }
+        catch (AcpException error) when (!error.RequiresAuthentication)
+        {
+            ClearConversation();
+            throw new IOException($"CLI 无法打开会话。\n项目目录：{directory}\n{error.Message}", error);
+        }
         catch
         {
             ClearConversation();
@@ -465,7 +471,7 @@ internal sealed partial class MainForm : Form
             : "会话已恢复，当前 CLI 不回放历史消息。");
         if (requested is not null && current.CanReplay && messages.Items.Count > 0)
             messages.Focus();
-        else
+        else if (focusComposer)
             input.Focus();
     }
 
@@ -488,14 +494,21 @@ internal sealed partial class MainForm : Form
 
     private Task SendAsync()
     {
-        var sending = draft;
-        var text = sending.Text;
-        if (string.IsNullOrWhiteSpace(text) && !sending.HasAttachments || draftOwner is not { } owner ||
-            sessionId is null || agent is not { Connected: true } current)
+        if (project is null || string.IsNullOrWhiteSpace(draft.Text) && !draft.HasAttachments)
             return Task.CompletedTask;
-        var activeSession = sessionId;
         return RunAsync(async () =>
         {
+            if (sessionId is null || agent is not { Connected: true })
+            {
+                input.ReadOnly = true;
+                try { await StartSessionCoreAsync(null, focusComposer: false); }
+                finally { input.ReadOnly = false; }
+            }
+            if (closing || draftOwner is not { } owner || sessionId is not { } activeSession ||
+                agent is not { Connected: true } current)
+                return;
+            var sending = draft;
+            var text = sending.Text;
             var images = sending.Images.ToArray();
             var files = sending.TextFiles.ToArray();
             if (images.Length > 0 && !current.CanSendImages)
@@ -503,6 +516,8 @@ internal sealed partial class MainForm : Form
             if (files.Length > 0 && !current.CanSendTextFiles)
                 throw new InvalidOperationException("当前官方 CLI 不支持文本附件。请在附件窗口移除文本附件或更换 CLI。");
 
+            prompting = true;
+            UpdateCommands();
             var pending = new SendingText(text);
             sending.Sending.Add(pending);
             sending.Text = "";
@@ -558,7 +573,7 @@ internal sealed partial class MainForm : Form
                 FinishStreamingReply(cancelRequested ? "任务已中止，尚无正文。" : "任务未完成，CLI 未返回正文。");
                 transcript.EndChunks();
             }
-        }, isPrompt: true);
+        });
     }
 
     private async Task RequestCancellationAsync()
@@ -618,11 +633,12 @@ internal sealed partial class MainForm : Form
             Log(request.Description, "等待工具审批", TaskActivityKind.Interaction);
             SetStatus("Agent 请求工具审批。请查看详情。", record: false, speak: true);
             var selected = Dialogs.Permission(Form.ActiveForm ?? this, request, cancellation, RequestCancellationAsync);
-            Log("审批：" + (request.Options.FirstOrDefault(item => item.Id == selected)?.ToString() ?? "已取消"),
-                kind: TaskActivityKind.Interaction);
+            var outcome = cancellation.IsCancellationRequested ? null : request.Options.FirstOrDefault(item => item.Id == selected);
+            string summary = "审批结果：" + (outcome?.ToString() ?? "已取消");
+            Log($"{summary}\n\n{request.Description}", summary, TaskActivityKind.Interaction);
             if (!cancellation.IsCancellationRequested)
                 SetStatus("审批已提交，等待 Agent 继续。", kind: TaskActivityKind.Interaction);
-            return selected;
+            return outcome?.Id;
         });
 
     private Task<ElicitationResponse> AskQuestionAsync(ElicitationRequest request, CancellationToken cancellation) =>

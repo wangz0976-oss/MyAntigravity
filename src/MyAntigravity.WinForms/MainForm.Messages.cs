@@ -9,7 +9,6 @@ internal sealed partial class MainForm
     private readonly ListBox messages = new()
     {
         AccessibleName = "消息列表",
-        AccessibleDescription = "上下选择。左右跳到上一轮或下一轮提问。回车阅读全文。Shift 加 F10 打开消息操作。",
         Dock = DockStyle.Fill, IntegralHeight = false
     };
     private readonly ToolStripMenuItem openMessage = Item("阅读所选消息 (&R)");

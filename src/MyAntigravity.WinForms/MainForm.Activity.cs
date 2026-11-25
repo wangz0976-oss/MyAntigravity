@@ -35,7 +35,7 @@ internal sealed partial class MainForm
         window.KeyPreview = true;
         var query = new TextBox
         {
-            AccessibleName = "搜索任务记录", AccessibleDescription = "输入关键词筛选，按向下键到结果列表。",
+            AccessibleName = "搜索任务记录",
             Width = 250, TabIndex = 0
         };
         var kinds = new ComboBox
@@ -47,11 +47,10 @@ internal sealed partial class MainForm
         var entries = new ListBox
         {
             Dock = DockStyle.Fill, IntegralHeight = false, AccessibleName = "任务活动列表",
-            AccessibleDescription = "上下选择，回车进入详情。Ctrl 加 C 复制此条。Ctrl 加 F 搜索。", TabIndex = 1
+            TabIndex = 1
         };
         var details = ReadableText("所选活动详情");
         details.TabIndex = 2;
-        details.AccessibleDescription = "Shift 加 Tab 回到活动列表。";
         var matches = Caption("");
         var feedback = Caption("");
         feedback.LiveSetting = System.Windows.Forms.Automation.AutomationLiveSetting.Polite;

@@ -21,8 +21,7 @@ internal static partial class Dialogs
         form.KeyPreview = true;
         var query = new TextBox
         {
-            AccessibleName = searchName, Dock = DockStyle.Top, TabIndex = 0, Text = filter?.Query ?? "",
-            AccessibleDescription = "输入关键词筛选。按向下键或 Tab 到结果列表。"
+            AccessibleName = searchName, Dock = DockStyle.Top, TabIndex = 0, Text = filter?.Query ?? ""
         };
         var toggle = filter is null ? null : new CheckBox
         {
@@ -32,7 +31,7 @@ internal static partial class Dialogs
         var matches = new ListBox
         {
             AccessibleName = listName, Dock = DockStyle.Fill, IntegralHeight = false, HorizontalScrollbar = true,
-            TabIndex = 1 + filterRows, AccessibleDescription = "用方向键选择，按回车确认。Ctrl 加 F 筛选。"
+            TabIndex = 1 + filterRows
         };
         var count = MainForm.Caption("");
         var accept = new Button { Text = acceptText, AutoSize = true, DialogResult = DialogResult.OK };
@@ -43,7 +42,6 @@ internal static partial class Dialogs
         {
             remove = new Button { Text = removeText, AutoSize = true, DialogResult = DialogResult.Yes };
             buttons.Add(remove);
-            matches.AccessibleDescription += " Delete 打开移除确认。";
         }
         buttons.Add(close);
         var panel = new TableLayoutPanel

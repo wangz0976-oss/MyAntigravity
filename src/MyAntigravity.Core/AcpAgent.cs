@@ -23,6 +23,7 @@ public sealed class AcpAgent : IAsyncDisposable
     private JsonElement authMethods;
     private string agentName = "Antigravity CLI";
     private readonly string cwd;
+    public string WorkingDirectory => cwd;
 
     public event Action<string, JsonElement>? SessionUpdated;
     public event Action? Disconnected;

@@ -110,6 +110,8 @@ internal static class Fixture
                         });
                     break;
                 case "session/new":
+                    if (parameters.GetProperty("cwd").GetString() != cwd)
+                        throw new InvalidOperationException("创建会话时 ACP 工作目录和 CLI 进程目录不一致。");
                     if (rich)
                         CheckDirectories(parameters);
                     if (account is not null)

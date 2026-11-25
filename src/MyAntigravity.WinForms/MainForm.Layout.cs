@@ -4,8 +4,8 @@ namespace MyAntigravity;
 
 internal sealed partial class MainForm : Form
 {
-    private readonly ListBox projects = new() { AccessibleName = "项目列表", AccessibleDescription = "回车打开。Delete 从项目列表移除。Shift 加 F10 打开操作菜单。", Dock = DockStyle.Fill, IntegralHeight = false };
-    private readonly ListBox sessions = new() { AccessibleName = "历史会话", AccessibleDescription = "回车恢复，F2 重命名，Delete 删除本机历史记录。Shift 加 F10 打开操作菜单。", Dock = DockStyle.Fill, IntegralHeight = false };
+    private readonly ListBox projects = new() { AccessibleName = "项目列表", Dock = DockStyle.Fill, IntegralHeight = false };
+    private readonly ListBox sessions = new() { AccessibleName = "历史会话", Dock = DockStyle.Fill, IntegralHeight = false };
     private readonly ComposerTextBox input = new() { Multiline = true, AcceptsReturn = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, AccessibleName = "消息输入" };
     private readonly Label inputCaption = Caption("消息输入");
     private readonly Label status = new() { Text = "请选择本地项目，或从账户菜单登录。", Dock = DockStyle.Fill, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft };
@@ -54,7 +54,7 @@ internal sealed partial class MainForm : Form
     private readonly Button showOptions = new() { Text = "模型与权限 (&M)", AutoSize = true, Enabled = false };
     private readonly Button imageButton = new() { Text = "图片附件 (&I)", AutoSize = true, Enabled = false };
     private readonly Button textAttachmentsButton = new() { Text = "文本与代码附件 (&J)", AutoSize = true, Enabled = false };
-    private readonly Button showStatus = new() { Text = "查看状态 (&V)", AutoSize = true, AccessibleDescription = "打开完整状态文本。也可按 Ctrl 加 I。" };
+    private readonly Button showStatus = new() { Text = "查看状态 (&V)", AutoSize = true };
     private readonly Button showLog = new() { Text = "任务日志 (&L)", AutoSize = true };
     private readonly Button showDiff = new() { Text = "文件差异 (&F)", AutoSize = true };
     private readonly Label context = new() { Dock = DockStyle.Fill, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft, Text = "当前项目：未选择" };
@@ -62,7 +62,6 @@ internal sealed partial class MainForm : Form
     private void BuildUi()
     {
         Text = $"MyAntigravity {Program.Version}";
-        AccessibleDescription = "本地 Antigravity 客户端。F6 在项目、历史、会话、输入和状态之间切换。";
         StartPosition = FormStartPosition.CenterScreen;
         ClientSize = new Size(1070, 710);
         MinimumSize = new Size(690, 510);
@@ -145,7 +144,7 @@ internal sealed partial class MainForm : Form
                 Ctrl+Shift+S：账户与连接。Alt+R 重新核验，Alt+U 刷新额度，Alt+T 在官方终端查询。
                 Ctrl+L：任务日志。Ctrl+Shift+L：任务计划。Ctrl+I：完整状态。
                 Ctrl+D：文件差异。Ctrl+Page Up / Down 切换文件，F7 / F8 切换差异段。
-                审批先聚焦操作详情。Tab 浏览按钮，回车或 Esc 拒绝。Alt+Y 允许本次。
+                审批先聚焦操作详情。Tab 到按钮，按回车或空格确认该按钮。Esc 拒绝，Alt+Y 允许本次。
                 """);
             return Task.CompletedTask;
         }));

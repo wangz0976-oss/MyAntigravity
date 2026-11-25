@@ -224,6 +224,7 @@ internal sealed partial class MainForm
             context.Text = "当前项目：未选择";
             PopulateSessions();
         }
+        projectDrafts.Remove(directory);
         ReloadProjects();
         if (projects.Items.Count == 0)
             addProject.Focus();

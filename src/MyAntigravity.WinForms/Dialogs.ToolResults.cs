@@ -8,7 +8,7 @@ internal static partial class Dialogs
         public override string ToString() => $"{Name}，{Payload.MimeType}，{Payload.Length:N0} 字节";
     }
 
-    private static IEnumerable<Button> ToolResultActions(Form form, RichTextBox body, Label status,
+    private static IEnumerable<Button> ToolResultActions(Form form, Label status,
         TurnToolResult result, IReadOnlyList<string> workspaces)
     {
         if (result.IsFailure)
@@ -26,7 +26,6 @@ internal static partial class Dialogs
                     status.Text = "剪贴板暂不可用，请重试。";
                 }
             };
-            body.AccessibleDescription += "Alt 加 E 复制这个工具的错误详情。";
             yield return copyError;
         }
 
@@ -44,7 +43,6 @@ internal static partial class Dialogs
                         files.Enabled = true;
                 }
             };
-            body.AccessibleDescription += "Alt 加 J 在项目中定位文件行号。";
             yield return files;
         }
 
@@ -52,7 +50,6 @@ internal static partial class Dialogs
         {
             var images = new Button { Text = "查看结果图片 (&I)", AutoSize = true };
             images.Click += (_, _) => ShowToolImages(form, result.Images);
-            body.AccessibleDescription += "Alt 加 I 查看工具返回的图片。";
             yield return images;
         }
 
@@ -60,7 +57,6 @@ internal static partial class Dialogs
         {
             var review = new Button { Text = "逐段审查差异 (&W)", AutoSize = true };
             review.Click += (_, _) => ReviewChanges(form, result.Changes);
-            body.AccessibleDescription += "Alt 加 W 打开文件差异审查。";
             yield return review;
         }
     }
@@ -103,7 +99,6 @@ internal static partial class Dialogs
         var body = MainForm.ReadableText($"只读项目文件，{position}");
         body.WordWrap = false;
         body.ScrollBars = RichTextBoxScrollBars.Both;
-        body.AccessibleDescription = "用方向键阅读。Ctrl 加 F 查找文字，F3 找下一处，Ctrl 加 G 跳到行号。Esc 返回结果列表。";
         body.Text = file.Text;
         var query = new TextBox { AccessibleName = "文件查找关键词", Width = 185, MaxLength = 512 };
         var line = new TextBox { AccessibleName = "目标行号", Width = 85, MaxLength = 10 };
