@@ -7,6 +7,9 @@ namespace MyAntigravity;
 public sealed record Choice(string Id, string Name, string? Description)
 {
     public override string ToString() => Name;
+
+    public bool IsOrchestrator => Name.StartsWith("Orchestrator", StringComparison.OrdinalIgnoreCase) ||
+        Id.Split('-', '_', ':').Contains("orchestrator", StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed record SessionOption(string Id, string Label, string? Description,

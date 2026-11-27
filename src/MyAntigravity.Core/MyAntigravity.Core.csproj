@@ -4,5 +4,6 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="MyAntigravity.Tests" />
+    <InternalsVisibleTo Include="MyAntigravity" />
   </ItemGroup>
 </Project>

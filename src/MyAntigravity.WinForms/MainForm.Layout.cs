@@ -14,6 +14,9 @@ internal sealed partial class MainForm : Form
     private readonly Button steer = new() { Text = "追加指令 (&A)", AutoSize = true, Enabled = false };
     private readonly ToolStripMenuItem steerMenu = Item("追加指令 (&G)", Keys.Control | Keys.Shift | Keys.Enter);
     private readonly ToolStripMenuItem newSession = Item("新建会话 (&N)", Keys.Control | Keys.N);
+    private readonly ToolStripMenuItem customAgentSession = Item("使用自定义代理新建会话 (&J)");
+    private readonly ToolStripMenuItem orchestrationModels = Item("选择编排模型 (&O)");
+    private readonly ToolStripMenuItem collaborationCommands = Item("团队与子代理命令 (&W)");
     private readonly ToolStripMenuItem restore = Item("恢复所选会话 (&H)", Keys.Control | Keys.H);
     private readonly ToolStripMenuItem findHistory = Item("查找会话 (&K)", Keys.Control | Keys.K);
     private readonly ToolStripMenuItem findAllHistory = Item("跨项目查找会话 (&G)");
@@ -23,7 +26,7 @@ internal sealed partial class MainForm : Form
     private readonly ToolStripMenuItem archivedHistory = Item("打开本地归档 (&B)", Keys.Control | Keys.Shift | Keys.H);
     private readonly ToolStripMenuItem removeSession = Item("从本机历史删除会话 (&D)");
     private readonly ToolStripMenuItem imageMenu = Item("图片附件 (&I)", Keys.Control | Keys.Shift | Keys.I);
-    private readonly ToolStripMenuItem textAttachmentsMenu = Item("文本与代码附件 (&J)", Keys.Control | Keys.Shift | Keys.J);
+    private readonly ToolStripMenuItem textAttachmentsMenu = Item("文件附件 (&J)", Keys.Control | Keys.Shift | Keys.J);
     private readonly ToolStripMenuItem refresh = Item("刷新历史会话 (&R)", Keys.Control | Keys.R);
     private readonly ToolStripMenuItem officialHistory = Item("查看官方历史 (&I)");
     private readonly ToolStripMenuItem disconnect = Item("断开并停止 ACP (&D)", Keys.Control | Keys.Shift | Keys.D);
@@ -57,7 +60,7 @@ internal sealed partial class MainForm : Form
     private readonly Button addProject = new() { Text = "添加项目 (&O)", AutoSize = true };
     private readonly Button showOptions = new() { Text = "模型与权限 (&M)", AutoSize = true, Enabled = false };
     private readonly Button imageButton = new() { Text = "图片附件 (&I)", AutoSize = true, Enabled = false };
-    private readonly Button textAttachmentsButton = new() { Text = "文本与代码附件 (&J)", AutoSize = true, Enabled = false };
+    private readonly Button textAttachmentsButton = new() { Text = "文件附件 (&J)", AutoSize = true, Enabled = false };
     private readonly Button showStatus = new() { Text = "查看状态 (&V)", AutoSize = true };
     private readonly Button showLog = new() { Text = "任务日志 (&L)", AutoSize = true };
     private readonly Button showDiff = new() { Text = "文件差异 (&F)", AutoSize = true };
@@ -89,7 +92,11 @@ internal sealed partial class MainForm : Form
             projectChanges, projectWorktrees, additionalDirectories, projectExplorer, copyProjectPath, removeProject,
             new ToolStripSeparator(), Item("退出 (&X)", action: () => { Close(); return Task.CompletedTask; })]);
         var sessionMenu = Item("会话 (&C)");
-        sessionMenu.DropDownItems.AddRange([newSession, restore, optionsMenu, findHistory, findAllHistory,
+        customAgentSession.Click += async (_, _) => await StartCustomAgentAsync();
+        orchestrationModels.Click += async (_, _) => await SelectOrchestratorAsync();
+        collaborationCommands.Click += async (_, _) => await InsertOfficialCommandAsync(collaborationOnly: true);
+        sessionMenu.DropDownItems.AddRange([newSession, customAgentSession, restore, optionsMenu, orchestrationModels,
+            collaborationCommands, findHistory, findAllHistory,
             new ToolStripSeparator(), renameSession, pinSession, archiveSession, archivedHistory, removeSession,
             new ToolStripSeparator(), refresh, officialHistory]);
         var messageMenu = Item("消息 (&M)");
@@ -153,7 +160,7 @@ internal sealed partial class MainForm : Form
                 生成时按发送键排队。从“消息 → 查看排队消息”查看全文或撤回所选项。
                 Ctrl+Shift+Enter：把输入框里的文字立即追加给正在运行的任务。
                 Ctrl+Shift+I：图片附件。在附件窗口按 Ctrl+O 添加，回车查看，Delete 从草稿移除。
-                Ctrl+Shift+J：文本与代码附件。Ctrl+O 添加，回车读原文，Delete 从草稿移除。
+                Ctrl+Shift+J：文档、文本与代码附件。Ctrl+O 添加，回车读原文，Delete 从草稿移除。
                 Ctrl+Shift+P：搜索并填入官方命令，确认后再发送。
                 Ctrl+F9：从列表打开技能、MCP 服务或已安装插件。
                 Ctrl+Shift+R：朗读最新回复，在审批窗口朗读操作详情。

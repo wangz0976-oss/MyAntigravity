@@ -303,18 +303,20 @@ internal sealed partial class MainForm
         return Task.CompletedTask;
     });
 
-    private Task InsertOfficialCommandAsync() => RunAsync(() =>
+    private Task InsertOfficialCommandAsync(bool collaborationOnly = false) => RunAsync(() =>
     {
         if (sessionId is not { } active || agent is not { Connected: true })
             return Task.CompletedTask;
-        if (availableCommands.Count == 0)
+        var commands = collaborationOnly ? availableCommands.Where(command => command.IsCollaboration).ToArray() : availableCommands;
+        string title = collaborationOnly ? "团队与子代理命令" : "官方命令";
+        if (commands.Count == 0)
         {
-            Dialogs.Text(this, "官方命令", "当前会话没有收到可用命令列表。");
+            Dialogs.Text(this, title, "当前会话没有收到此类可用命令。");
             return Task.CompletedTask;
         }
 
-        var selected = Dialogs.Search(this, "官方命令", "搜索命令或说明", "匹配命令", "填入消息框 (&I)",
-            availableCommands, command => $"{command} {CommandDetails(command)}", CommandDetails);
+        var selected = Dialogs.Search(this, title, "搜索命令或说明", "匹配命令", "填入消息框 (&I)",
+            commands, command => $"{command} {CommandDetails(command)}", CommandDetails);
         if (selected is null)
             return Task.CompletedTask;
         if (sessionId != active || !availableCommands.Any(command => command.Name == selected.Name))
@@ -336,6 +338,11 @@ internal sealed partial class MainForm
         var summary = command.Name switch
         {
             "plan" => "先规划，再执行任务。",
+            "agents" => "查看自定义代理及子代理。",
+            "teamwork" => "由官方 Agent 组织团队协作。",
+            "swarm" => "让多个代理在共享任务中协调。",
+            "boost" => "让官方 Agent 对复杂问题做深入核对。",
+            "run-workflow" => "使用官方动态工作流。",
             "diff" => "查看本轮文件改动。",
             "compact" => "压缩会话上下文。",
             "context" => "查看会话上下文。",

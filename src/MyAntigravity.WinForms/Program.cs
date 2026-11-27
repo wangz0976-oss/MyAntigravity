@@ -33,6 +33,11 @@ internal static class Program
     {
         if (args is ["--setup-cli", var reportPath])
             return SetupCli(reportPath);
+        if (args is ["--read-document-text", var document, var limit])
+        {
+            SetErrorMode(FailCriticalErrors | NoFaultDialog);
+            return DocumentText.RunReader(document, limit);
+        }
 
         ApplicationConfiguration.Initialize();
         using var mutex = new Mutex(true, @"Local\MyAntigravity-" +

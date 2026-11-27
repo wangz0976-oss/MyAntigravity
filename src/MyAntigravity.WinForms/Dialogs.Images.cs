@@ -15,11 +15,11 @@ internal static partial class Dialogs
 
     internal static void TextFiles(Form owner, List<TextAttachment> files, string directory, bool canAdd) =>
         Attachments(owner, files, directory, canAdd, new AttachmentOptions<TextAttachment>(
-            "文本与代码附件", "待发送文本与代码", "添加文件", "选择要附上的文本或代码文件",
-            "文本、文档与代码|*.txt;*.md;*.log;*.csv;*.tsv;*.json;*.jsonl;*.yaml;*.yml;*.toml;*.xml;*.html;*.css;*.js;*.ts;*.cs;*.py;*.ps1;*.c;*.cpp;*.h;*.java;*.go;*.rs;*.sql|所有文件|*.*",
-            PromptTextFile.MaxCount, PromptTextFile.MaxPromptBytes, "单个最多 256 KiB，合计最多 1 MiB。",
+            "文档、文本与代码附件", "待发送文件", "添加文件", "选择要附上的文档、文本或代码",
+            "文档、文本与代码|*.docx;*.doc;*.pdf;*.xlsx;*.ppt;*.txt;*.md;*.log;*.csv;*.tsv;*.json;*.jsonl;*.yaml;*.yml;*.toml;*.xml;*.html;*.css;*.js;*.ts;*.cs;*.py;*.ps1;*.c;*.cpp;*.h;*.java;*.go;*.rs;*.sql|所有文件|*.*",
+            PromptTextFile.MaxCount, PromptTextFile.MaxPromptBytes, "附上可提取的文字。单个最多 256 KiB，合计最多 1 MiB。",
             file => file.Path, file => file.Payload.Length, TextAttachment.LoadAsync,
-            (owner, file) => Text(owner, "查看文本与代码附件", file.Details, showInTaskbar: true)));
+            (owner, file) => Text(owner, "查看文件附件", file.Details, showInTaskbar: true)));
 
     private static void Attachments<T>(Form owner, List<T> items, string directory, bool canAdd,
         AttachmentOptions<T> settings) where T : class
@@ -103,7 +103,7 @@ internal static partial class Dialogs
                         token.ThrowIfCancellationRequested();
                         items.Add(item);
                     }
-                    catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+                    catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or TimeoutException)
                     {
                         errors.Add($"{AgentText.Visible(Path.GetFileName(path))}：{AgentText.Visible(error.Message)}");
                     }

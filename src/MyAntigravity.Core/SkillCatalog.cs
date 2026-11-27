@@ -7,6 +7,11 @@ public sealed record AgentSkill(string Name, string Source, string Description, 
     public override string ToString() => $"{AgentText.Visible(Name)}，{AgentText.Visible(Source)}{(Enabled ? "" : "，插件已停用")}";
 }
 
+public sealed record AgentPreset(string Name, string Source, string Description)
+{
+    public override string ToString() => $"{Name}，{Source}";
+}
+
 public static class SkillCatalog
 {
     private const int PreviewLimit = 64 * 1024;
@@ -60,6 +65,34 @@ public static class SkillCatalog
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
         }
+    }
+
+    public static IReadOnlyList<AgentPreset> ReadProjectAgents(string workspace)
+    {
+        var agents = new List<AgentPreset>();
+        foreach (var root in ProjectRoots(workspace))
+        {
+            var directory = Path.Combine(root, ".agents", "agents");
+            if (!Directory.Exists(directory))
+                continue;
+            try
+            {
+                var files = Directory.EnumerateFiles(directory, "*.md").Concat(
+                    Directory.EnumerateDirectories(directory).Select(path => Path.Combine(path, "agent.md")));
+                foreach (var file in files.Where(File.Exists))
+                {
+                    try
+                    {
+                        var (name, description) = ReadMetadata(ReadPrefix(file, HeaderLimit, out _));
+                        if (Cli.IsAgentName(name))
+                            agents.Add(new AgentPreset(name!, "项目", description ?? ""));
+                    }
+                    catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+                }
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+        }
+        return agents;
     }
 
     public static string Preview(string path)

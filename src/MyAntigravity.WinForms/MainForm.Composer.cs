@@ -102,11 +102,11 @@ internal sealed partial class MainForm
         }
         textAttachmentsMenu.Enabled = textAttachmentsButton.Enabled = available &&
             (agent?.CanSendTextFiles == true || draft.TextFiles.Count > 0);
-        var filesCaption = $"文本与代码附件（{draft.TextFiles.Count}）(&J)";
+        var filesCaption = $"文件附件（{draft.TextFiles.Count}）(&J)";
         if (textAttachmentsButton.Text != filesCaption)
         {
             textAttachmentsButton.Text = filesCaption;
-            textAttachmentsButton.AccessibleName = $"文本与代码附件，待发送 {draft.TextFiles.Count} 个";
+            textAttachmentsButton.AccessibleName = $"文件附件，待发送 {draft.TextFiles.Count} 个";
         }
     }
 
@@ -255,7 +255,7 @@ internal sealed partial class MainForm
         if (ReferenceEquals(windowDraft, draft))
         {
             input.Focus();
-            SetStatus($"草稿中有 {draft.TextFiles.Count} 个文本与代码附件待发送。");
+            SetStatus($"草稿中有 {draft.TextFiles.Count} 个文件附件待发送。");
         }
         return Task.CompletedTask;
     });

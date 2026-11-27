@@ -14,6 +14,7 @@ internal sealed partial class MainForm : Form
     private readonly Dictionary<string, string> toolTitles = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim interactionQueue = new(1, 1);
     private AcpAgent? agent;
+    private string? connectedAgentName;
     private string? project;
     private string? sessionId;
     private string? contextUsage;
@@ -206,7 +207,7 @@ internal sealed partial class MainForm : Form
             removeProject.Enabled = idle && projects.SelectedItem is string;
         additionalDirectories.Enabled = projectWorktrees.Enabled = projectChanges.Enabled = idle && project is not null;
         quickProject.Enabled = idle && settings.Projects.Count > 0;
-        newSession.Enabled = refresh.Enabled = officialHistory.Enabled = idle && project is not null;
+        newSession.Enabled = customAgentSession.Enabled = refresh.Enabled = officialHistory.Enabled = idle && project is not null;
         restore.Enabled = openSession.Enabled = idle && project is not null && sessions.SelectedItem is LocalSession;
         removeSession.Enabled = restore.Enabled;
         findHistory.Enabled = idle && sessions.Items.Count > 0;
@@ -219,6 +220,9 @@ internal sealed partial class MainForm : Form
             ? "取消会话置顶 (&T)" : "置顶本地会话 (&T)";
         archivedHistory.Enabled = idle && project is not null;
         commandPalette.Enabled = idle && sessionId is not null && agent is { Connected: true };
+        collaborationCommands.Enabled = commandPalette.Enabled && availableCommands.Any(command => command.IsCollaboration);
+        orchestrationModels.Enabled = commandPalette.Enabled &&
+            options.Any(option => option.Category == "model" && option.Choices.Any(choice => choice.IsOrchestrator));
         showOptions.Enabled = optionsMenu.Enabled = idle && sessionId is not null && options.Count > 0;
         UpdateComposerCommands();
         readReplyMenu.Enabled = !closing && latestReply.Length > 0;
@@ -278,16 +282,18 @@ internal sealed partial class MainForm : Form
         finally { projects.EndUpdate(); }
     }
 
-    private async Task<AcpAgent> ConnectAsync()
+    private async Task<AcpAgent> ConnectAsync(string? customAgent = null, bool selectAgent = false)
     {
         var directory = WorkingDirectory();
-        if (agent is { Connected: true } existing && LocalSettings.PathEquals(existing.WorkingDirectory, directory))
+        if (agent is { Connected: true } existing && LocalSettings.PathEquals(existing.WorkingDirectory, directory) &&
+            (!selectAgent || string.Equals(connectedAgentName, customAgent, StringComparison.Ordinal)))
             return existing;
 
         await ResetAgentAsync();
         var executable = RequireCli();
-        var current = new AcpAgent(AcpStartInfo(executable, directory), AskPermissionAsync, AskQuestionAsync);
+        var current = new AcpAgent(AcpStartInfo(executable, directory, customAgent), AskPermissionAsync, AskQuestionAsync);
         connectedExecutable = executable;
+        connectedAgentName = customAgent;
         current.SessionUpdated += (id, data) => Post(() =>
         {
             if (ReferenceEquals(agent, current))
@@ -328,6 +334,7 @@ internal sealed partial class MainForm : Form
     {
         var previous = agent;
         agent = null;
+        connectedAgentName = null;
         connectionReady = false;
         sessionId = null;
         SwitchDraft(null);
@@ -432,7 +439,7 @@ internal sealed partial class MainForm : Form
 
     private Task StartSessionAsync(string? requested) => RunAsync(() => StartSessionCoreAsync(requested));
 
-    private async Task StartSessionCoreAsync(string? requested, bool focusComposer = true)
+    private async Task StartSessionCoreAsync(string? requested, bool focusComposer = true, string? customAgent = null)
     {
         if (project is null)
             return;
@@ -446,7 +453,7 @@ internal sealed partial class MainForm : Form
         }
         SetStatus(requested is null ? "正在创建会话。" : "正在恢复历史会话。");
         var directory = LocalSettings.ProjectPath(project);
-        var current = await ConnectAsync();
+        var current = await ConnectAsync(customAgent, selectAgent: true);
         if (requested is not null && !current.CanRestore)
             throw new InvalidOperationException("当前 CLI 未声明会话恢复能力。");
         var directories = settings.DirectoriesForProject(project).Select(LocalSettings.ProjectPath).ToArray();
@@ -498,7 +505,7 @@ internal sealed partial class MainForm : Form
         transcript.EndChunks();
         RenderMessages();
         bool positioned = RestoreReadingPosition();
-        SetStatus(requested is null ? "会话已创建。" + modeStatus
+        SetStatus(requested is null ? (customAgent is null ? "会话已创建。" : $"已用代理 {customAgent} 创建会话。") + modeStatus
             : current.CanReplay ? positioned ? "历史会话已恢复，已定位到上次阅读位置。" : "历史会话已恢复。"
             : "会话已恢复，当前 CLI 不回放历史消息。");
         if (focusComposer && requested is not null && current.CanReplay && messages.Items.Count > 0)
@@ -581,7 +588,7 @@ internal sealed partial class MainForm : Form
         if (images.Length > 0 && !current.CanSendImages)
             throw new InvalidOperationException("当前官方 CLI 不支持图片附件。请在图片附件窗口移除图片或更换 CLI。");
         if (files.Length > 0 && !current.CanSendTextFiles)
-            throw new InvalidOperationException("当前官方 CLI 不支持文本附件。请在附件窗口移除文本附件或更换 CLI。");
+            throw new InvalidOperationException("当前官方 CLI 不支持嵌入文件文字。请在附件窗口移除文本附件或更换 CLI。");
 
         prompting = true;
         UpdateCommands();
@@ -605,7 +612,7 @@ internal sealed partial class MainForm : Form
         var attachmentText = images.Length > 0
             ? "\n图片附件：" + string.Join("、", images.Select(image => image.Name)) : "";
         if (files.Length > 0)
-            attachmentText += "\n文本与代码附件：" + string.Join("、", files.Select(file => file.Name));
+            attachmentText += "\n文件附件：" + string.Join("、", files.Select(file => file.Name));
         BeginStreamingReply(text + attachmentText);
         SetStatus("任务进行中。");
         try
@@ -967,6 +974,8 @@ internal sealed partial class MainForm : Form
                 contextUsage ?? "上下文用量：官方 CLI 暂未报告。",
                 lastTurnUsage ?? "最近一轮 token：官方 CLI 暂未报告。"]);
         }
+        if (sessionId is not null && connectedAgentName is not null)
+            lines.Add($"自定义代理：{connectedAgentName}。");
         if (project is not null)
         {
             var mode = settings.DefaultsForProject(project).Mode;

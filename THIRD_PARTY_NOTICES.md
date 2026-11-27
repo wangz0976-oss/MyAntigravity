@@ -8,6 +8,13 @@ MyAntigravity 通过公开的 Agent Client Protocol 与 Google Antigravity CLI �
 
 安装向导使用 Inno Setup 的官方简体中文翻译，维护者为 Zhenghan Yang（Kira）。翻译来自[上游提交 c34976f](https://github.com/jrsoftware/issrc/blob/c34976f7d107e94d4fce8ac29f72ca33762293d7/Files/Languages/ChineseSimplified.isl)，原始许可见 [Inno Setup License](packaging/Inno-Setup-LICENSE.txt)。
 
+## 文档解析
+
+以下库随安装包分发，均使用 [Apache License 2.0](packaging/Apache-2.0.txt)。分发目录的 licenses/Apache-2.0.txt 包含许可证全文。
+
+- [DotnetPoi](https://github.com/modeverv/dotnet-poi)，版权所有 © 2025 modeverv。随附 DotnetPoi.Legacy 0.5.0、DotnetPoi.Ooxml 1.0.1、DotnetPoi.Common 1.0.0、DotnetPoi.POIFS 1.0.0。DotnetPoi 移植自 [Apache POI](https://poi.apache.org/)。
+- [PdfPig 0.1.16](https://github.com/UglyToad/PdfPig/tree/a7bb35662bbbf405efddad50aedc9bcdcf515afc)，由 PdfPig 贡献者维护。
+
 ## 参考项目
 
 以下仓库用于调研产品设计、Windows 无障碍、进程通信、会话和发布流程。本项目独立实现 ACP 客户端，未复制这些仓库的源代码或二进制资源。

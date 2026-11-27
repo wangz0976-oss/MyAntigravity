@@ -185,6 +185,20 @@ public static class Cli
             .OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
+    public static async Task<IReadOnlyList<string>> ListAgentsAsync(string executable, string cwd)
+    {
+        var (output, _) = await ReadOutputAsync(executable, cwd, "官方自定义代理查询", "agents").ConfigureAwait(false);
+        return ParseAgentNames(output);
+    }
+
+    internal static string[] ParseAgentNames(string output) => output.Split('\n', StringSplitOptions.TrimEntries |
+            StringSplitOptions.RemoveEmptyEntries)
+        .Where(IsAgentName).Distinct(StringComparer.Ordinal)
+        .OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToArray();
+
+    internal static bool IsAgentName(string? name) => name is { Length: > 0 and <= 100 } &&
+        char.IsAsciiLetterOrDigit(name[0]) && name.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_' or '.');
+
     public static async Task<IReadOnlyList<McpServer>> ListMcpAsync(string executable, string cwd)
     {
         var (output, _) = await ReadOutputAsync(executable, cwd, "官方 MCP 查询", "mcp", "list").ConfigureAwait(false);

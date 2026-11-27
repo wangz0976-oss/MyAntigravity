@@ -6,6 +6,8 @@ public sealed record AcpCommand(string Name, string Description, string? InputHi
 {
     public override string ToString() => "/" + Name;
 
+    public bool IsCollaboration => Name is "agents" or "teamwork" or "swarm" or "boost" or "run-workflow";
+
     public static IReadOnlyList<AcpCommand> Parse(JsonElement update)
     {
         var commands = new List<AcpCommand>();

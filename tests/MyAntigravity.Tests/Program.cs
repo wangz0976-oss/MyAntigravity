@@ -45,6 +45,23 @@ if (args is ["--live-permissions", var permissionExecutable])
 }
 
 int testCount = 0;
+await Case("官方编排模型、协作命令和代理名称", () =>
+{
+    Check(new Choice("model-composed", "Orchestrator (Carbon)", null).IsOrchestrator &&
+        new Choice("gemini-4-neon-orchestrator", "Gemini 4 Neon", null).IsOrchestrator &&
+        !new Choice("gemini-4-neon", "Gemini 4 Neon", null).IsOrchestrator, "仅识别官方列表中的编排模型");
+    Check(new AcpCommand("teamwork", "", null).IsCollaboration && !new AcpCommand("plan", "", null).IsCollaboration,
+        "团队命令入口筛选");
+    Check(Cli.ParseAgentNames("fixture-agent\r\nfl_a11y\r\n--sandbox\r\nfixture-agent\r\n无效行")
+        .SequenceEqual(["fixture-agent", "fl_a11y"]), "CLI 代理名称保留有效值并拒绝参数");
+    var workspace = Directory.CreateDirectory(Path.Combine(scratch, "custom-agent-filter")).FullName;
+    var spec = Directory.CreateDirectory(Path.Combine(workspace, ".agents", "agents", "fixture")).FullName;
+    File.WriteAllText(Path.Combine(spec, "agent.md"), "---\nname: fixture-agent\ndescription: A fixture.\n---\nBody.");
+    File.WriteAllText(Path.Combine(workspace, ".agents", "agents", "invalid.md"), "---\nname: --sandbox\n---\nBody.");
+    Check(SkillCatalog.ReadProjectAgents(workspace) is [{ Name: "fixture-agent", Description: "A fixture." }],
+        "发现项目中的官方格式代理并保留名称和说明");
+    return Task.CompletedTask;
+});
 await Case("项目权限偏好隔离、保存和升级兼容", () =>
 {
     var first = Directory.CreateDirectory(Path.Combine(scratch, "permission-project", "first")).FullName;

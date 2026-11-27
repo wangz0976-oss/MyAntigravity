@@ -97,6 +97,7 @@ try {
         -p:DebugType=None -p:DebugSymbols=false -o $app
     if ($LASTEXITCODE) { throw "dotnet publish failed ($LASTEXITCODE)." }
     Copy-Item -LiteralPath 'LICENSE', 'THIRD_PARTY_NOTICES.md' -Destination $app
+    Copy-Item -LiteralPath 'packaging/Apache-2.0.txt' -Destination $licenses
 
     $assets = Get-Content -Raw -LiteralPath 'src/MyAntigravity.WinForms/obj/project.assets.json' | ConvertFrom-Json
     foreach ($id in @('microsoft.netcore.app.runtime.win-x64', 'microsoft.windowsdesktop.app.runtime.win-x64')) {

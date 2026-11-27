@@ -33,9 +33,18 @@ internal sealed partial class MainForm
         return await AccountVerification.CheckAsync(probe, executable, Program.Version);
     }
 
-    private ProcessStartInfo AcpStartInfo(string executable, string directory) => settings.Sandbox
-        ? Cli.StartInfo(executable, directory, true, "acp", "--disable-telemetry", "--log-file", "NUL", "--sandbox")
-        : Cli.StartInfo(executable, directory, true, "acp", "--disable-telemetry", "--log-file", "NUL");
+    private ProcessStartInfo AcpStartInfo(string executable, string directory, string? customAgent = null)
+    {
+        var start = Cli.StartInfo(executable, directory, true, "acp", "--disable-telemetry", "--log-file", "NUL");
+        if (settings.Sandbox)
+            start.ArgumentList.Add("--sandbox");
+        if (customAgent is not null)
+        {
+            start.ArgumentList.Add("--agent");
+            start.ArgumentList.Add(customAgent);
+        }
+        return start;
+    }
 
     private Task ShowAccountAsync()
     {

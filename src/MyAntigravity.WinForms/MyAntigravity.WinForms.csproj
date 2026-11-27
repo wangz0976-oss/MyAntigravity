@@ -10,6 +10,9 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../MyAntigravity.Core/MyAntigravity.Core.csproj" />
+    <PackageReference Include="DotnetPoi.Legacy" Version="0.5.0" />
+    <PackageReference Include="DotnetPoi.Ooxml" Version="1.0.1" />
+    <PackageReference Include="PdfPig" Version="0.1.16" />
     <EmbeddedResource Include="../../help/用户手册.txt" LogicalName="MyAntigravity.UserGuide.txt" />
     <EmbeddedResource Include="../../CHANGELOG.md" LogicalName="MyAntigravity.Changelog.md" />
   </ItemGroup>
