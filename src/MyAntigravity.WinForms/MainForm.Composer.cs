@@ -22,6 +22,9 @@ internal sealed partial class MainForm
     private string? draftProject;
     private (string Project, string Session)? draftOwner;
     private ComposerDraft draft = new();
+    private readonly FollowUpQueue followUps = new();
+    private ComposerDraft? queueDraft;
+    private (string Project, string Session)? queueOwner;
     private bool steering;
     private bool interactionOpen;
 
@@ -75,7 +78,13 @@ internal sealed partial class MainForm
     {
         bool idleProject = !busy && !closing && project is not null;
         bool available = idleProject && draftOwner is not null && sessionId is not null && agent is { Connected: true };
-        send.Enabled = sendMessageMenu.Enabled = idleProject && (!string.IsNullOrWhiteSpace(draft.Text) || draft.HasAttachments) &&
+        bool canQueue = prompting && !cancelRequested && !closing && draftOwner == queueOwner &&
+            agent is { Connected: true } && followUps.Count < FollowUpQueue.Capacity &&
+            !draft.HasAttachments && !string.IsNullOrWhiteSpace(draft.Text);
+        send.Text = !prompting ? "发送 (&S)" : $"排队发送（{followUps.Count}）(&S)";
+        sendMessageMenu.Text = !prompting ? "发送消息 (&S)" : $"排队发送（{followUps.Count}）(&S)";
+        queuedFollowUps.Enabled = withdrawFollowUp.Enabled = followUps.Count > 0 && !closing;
+        send.Enabled = sendMessageMenu.Enabled = canQueue || idleProject && (!string.IsNullOrWhiteSpace(draft.Text) || draft.HasAttachments) &&
             (draft.Images.Count == 0 || agent?.CanSendImages == true) &&
             (draft.TextFiles.Count == 0 || agent?.CanSendTextFiles == true);
         steer.Enabled = steerMenu.Enabled = prompting && !steering && !interactionOpen && !cancelRequested && !closing &&
@@ -99,6 +108,80 @@ internal sealed partial class MainForm
             textAttachmentsButton.Text = filesCaption;
             textAttachmentsButton.AccessibleName = $"文本与代码附件，待发送 {draft.TextFiles.Count} 个";
         }
+    }
+
+    private void QueueFollowUp()
+    {
+        if (cancelRequested || closing || !ReferenceEquals(queueDraft, draft) ||
+            agent is not { Connected: true } || draft.HasAttachments)
+            return;
+        if (!followUps.Enqueue(draft.Text))
+        {
+            if (followUps.Count == FollowUpQueue.Capacity)
+                SetStatus("排队已满。可从消息菜单撤回最后一条。", speak: true);
+            return;
+        }
+        draft.Text = "";
+        RefreshComposer();
+        SetStatus($"已排队 {followUps.Count} 条。任务正常结束后按顺序发送。", speak: true);
+    }
+
+    private sealed record QueuedPrompt(FollowUpQueue.Entry Entry, int Number)
+    {
+        public override string ToString()
+        {
+            var text = Entry.Text.Trim().AsSpan();
+            int lineEnd = text.IndexOfAny('\r', '\n');
+            int length = lineEnd < 0 ? text.Length : lineEnd;
+            var preview = AgentText.Visible(text[..Math.Min(90, length)].ToString());
+            return $"{Number}. {preview}{(length < text.Length || length > 90 ? "…" : "")}";
+        }
+    }
+
+    private void ShowQueuedFollowUps()
+    {
+        var pending = followUps.Entries.Select((entry, index) => new QueuedPrompt(entry, index + 1)).ToArray();
+        if (pending.Length == 0)
+            return;
+        var (selected, withdraw) = Dialogs.Browse(this, "排队消息", "筛选消息", "待发送追问", "查看全文 (&V)",
+            pending, item => item.Entry.Text, item => item.Entry.Text, removeText: "撤回所选 (&W)");
+        if (selected is null)
+            return;
+        if (!withdraw)
+        {
+            Dialogs.Text(this, "待发送追问全文", selected.Entry.Text);
+            return;
+        }
+
+        if (queueDraft is not { } sending || queueOwner is not { } owner || !followUps.Withdraw(selected.Entry))
+        {
+            SetStatus("这条追问已发送或已退回草稿。", speak: true);
+            return;
+        }
+        RestoreFailedDraft(sending, owner, selected.Entry.Text, [], []);
+        RememberDraft(owner, sending);
+        SetStatus($"已把所选追问退回草稿。还有 {followUps.Count} 条排队。", speak: true);
+    }
+
+    private void WithdrawFollowUp()
+    {
+        if (queueDraft is not { } sending || queueOwner is not { } owner ||
+            followUps.WithdrawLatest() is not { } text)
+            return;
+        RestoreFailedDraft(sending, owner, text, [], []);
+        RememberDraft(owner, sending);
+        SetStatus($"已把最后一条排队消息退回草稿。还有 {followUps.Count} 条排队。", speak: true);
+    }
+
+    private void RestoreQueuedDraft()
+    {
+        var pending = followUps.Drain();
+        if (pending.Length == 0 || queueDraft is not { } sending || queueOwner is not { } owner)
+            return;
+        RestoreFailedDraft(sending, owner, string.Join(Environment.NewLine + Environment.NewLine, pending), [], []);
+        RememberDraft(owner, sending);
+        if (!closing)
+            Log("本轮未正常完成，待发送的追问已退回草稿。", "排队消息已退回草稿", TaskActivityKind.Interaction);
     }
 
     private async Task SendSteeringAsync()

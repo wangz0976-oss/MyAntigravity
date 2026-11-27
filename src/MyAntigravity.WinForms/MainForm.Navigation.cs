@@ -204,11 +204,13 @@ internal sealed partial class MainForm
             return;
 
         var original = settings.Projects.ToList();
+        var permissions = settings.ProjectPermissions.ToList();
         settings.RemoveProject(directory);
         try { storage.Save(settings); }
         catch
         {
             settings.Projects = original;
+            settings.ProjectPermissions = permissions;
             throw;
         }
 

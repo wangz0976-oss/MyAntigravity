@@ -12,6 +12,7 @@ public sealed record LocalSession(string Id, string Directory, string? Title, Da
 }
 
 public sealed record RemovedSession(string Id, string Directory);
+public sealed record ProjectPermission(string Project, string Mode);
 public sealed record ProjectDirectory(string Project, string Directory);
 public sealed record SessionWorkspace(string Session, string Directory, string Draft, ReadingBookmark? Bookmark);
 
@@ -32,6 +33,9 @@ public sealed class LocalSettings
     public List<string> Projects { get; set; } = [];
     public List<LocalSession> Sessions { get; set; } = [];
     public List<RemovedSession> RemovedSessions { get; set; } = [];
+    public List<ProjectPermission> ProjectPermissions { get; set; } = [];
+    public bool BackgroundApprovalNotifications { get; set; } = true;
+    public bool BackgroundCompletionNotifications { get; set; }
     public List<ProjectDirectory> AdditionalDirectories { get; set; } = [];
     public List<SessionWorkspace> SessionWorkspaces { get; set; } = [];
 
@@ -88,7 +92,29 @@ public sealed class LocalSettings
     public LocalSession? FindSession(string id, string directory) =>
         Sessions.Find(session => session.Id == id && PathEquals(session.Directory, directory));
 
-    public bool RemoveProject(string directory) => Projects.RemoveAll(path => PathEquals(path, directory)) > 0;
+    public bool RemoveProject(string directory)
+    {
+        SetProjectPermission(directory, null);
+        return Projects.RemoveAll(path => PathEquals(path, directory)) > 0;
+    }
+
+    public string? PermissionForProject(string project) =>
+        ProjectPermissions.Find(entry => PathEquals(entry.Project, project))?.Mode;
+
+    public void SetProjectPermission(string project, string? mode)
+    {
+        var path = string.IsNullOrWhiteSpace(mode) ? project : ProjectPath(project);
+        ProjectPermissions.RemoveAll(entry => PathEquals(entry.Project, path));
+        if (!string.IsNullOrWhiteSpace(mode))
+            ProjectPermissions.Add(new ProjectPermission(path, mode));
+    }
+
+    public SessionDefaults DefaultsForProject(string project)
+    {
+        var defaults = NewSessionDefaults ?? new();
+        var mode = PermissionForProject(project) ?? defaults.Mode;
+        return defaults with { Mode = SessionDefaults.CanRememberMode(mode) ? mode : null };
+    }
 
     public IReadOnlyList<string> DirectoriesForProject(string project) => AdditionalDirectories
         .Where(item => PathEquals(item.Project, project)).Select(item => item.Directory).ToArray();

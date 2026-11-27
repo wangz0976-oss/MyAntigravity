@@ -2,6 +2,11 @@ namespace MyAntigravity;
 
 public sealed record SessionDefaults(string? Mode = null, string? Model = null, string? Reasoning = null)
 {
+    public const string AutoPermissionNotice = "官方 CLI 1.5.13–1.5.18 的 ACP Auto 模式有已知缺陷，可能跳过本地拒绝和询问规则直接执行命令。需要确认权限时，请选需审批的模式。按 Ctrl+Shift+X 可请求中止。";
+
+    public static bool CanRememberMode(string? mode) => !string.IsNullOrWhiteSpace(mode) &&
+        !string.Equals(mode, "auto", StringComparison.OrdinalIgnoreCase);
+
     public IReadOnlyList<SessionSettingChange> Changes()
     {
         var result = new List<SessionSettingChange>();

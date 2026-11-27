@@ -121,6 +121,8 @@ internal sealed partial class MainForm : Form
         extensionHub.Click += async (_, _) => await ShowExtensionHubAsync();
         send.Click += async (_, _) => await SendAsync();
         sendMessageMenu.Click += async (_, _) => await SendAsync();
+        queuedFollowUps.Click += (_, _) => ShowQueuedFollowUps();
+        withdrawFollowUp.Click += (_, _) => WithdrawFollowUp();
         steer.Click += async (_, _) => await SendSteeringAsync();
         steerMenu.Click += async (_, _) => await SendSteeringAsync();
         cancel.Click += async (_, _) => await RequestCancellationAsync();
@@ -524,6 +526,11 @@ internal sealed partial class MainForm : Form
 
     private Task SendAsync()
     {
+        if (prompting)
+        {
+            QueueFollowUp();
+            return Task.CompletedTask;
+        }
         if (project is null || string.IsNullOrWhiteSpace(draft.Text) && !draft.HasAttachments)
             return Task.CompletedTask;
         return RunAsync(async () =>
@@ -538,72 +545,111 @@ internal sealed partial class MainForm : Form
                 agent is not { Connected: true } current)
                 return;
             var sending = draft;
-            var text = sending.Text;
-            var images = sending.Images.ToArray();
-            var files = sending.TextFiles.ToArray();
-            if (images.Length > 0 && !current.CanSendImages)
-                throw new InvalidOperationException("当前官方 CLI 不支持图片附件。请在图片附件窗口移除图片或更换 CLI。");
-            if (files.Length > 0 && !current.CanSendTextFiles)
-                throw new InvalidOperationException("当前官方 CLI 不支持文本附件。请在附件窗口移除文本附件或更换 CLI。");
+            queueDraft = sending;
+            queueOwner = owner;
+            try
+            {
+                string? queued = null;
+                while (await SendTurnAsync(current, activeSession, owner, sending, queued) &&
+                    !closing && !cancelRequested && sessionId == activeSession &&
+                    ReferenceEquals(agent, current) && current.Connected)
+                {
+                    queued = followUps.TakeNext();
+                    if (queued is null)
+                    {
+                        if (settings.BackgroundCompletionNotifications && !IsAppForeground())
+                            ShowBackgroundNotification("MyAntigravity 任务已完成", "切回 MyAntigravity 阅读回复。", dismiss: true);
+                        break;
+                    }
+                }
+            }
+            finally
+            {
+                RestoreQueuedDraft();
+                queueDraft = null;
+                queueOwner = null;
+            }
+        });
+    }
 
-            prompting = true;
-            UpdateCommands();
-            var pending = new SendingText(text);
-            sending.Sending.Add(pending);
+    private async Task<bool> SendTurnAsync(AcpAgent current, string activeSession,
+        (string Project, string Session) owner, ComposerDraft sending, string? queued)
+    {
+        var images = queued is null ? sending.Images.ToArray() : [];
+        var files = queued is null ? sending.TextFiles.ToArray() : [];
+        var text = queued ?? sending.Text;
+        if (images.Length > 0 && !current.CanSendImages)
+            throw new InvalidOperationException("当前官方 CLI 不支持图片附件。请在图片附件窗口移除图片或更换 CLI。");
+        if (files.Length > 0 && !current.CanSendTextFiles)
+            throw new InvalidOperationException("当前官方 CLI 不支持文本附件。请在附件窗口移除文本附件或更换 CLI。");
+
+        prompting = true;
+        UpdateCommands();
+        var pending = new SendingText(text);
+        sending.Sending.Add(pending);
+        if (queued is null)
+        {
             sending.Text = "";
             sending.Images.Clear();
             sending.TextFiles.Clear();
             RefreshComposer();
-            latestReply.Clear();
-            readReplyMenu.Enabled = false;
-            turnResults.Clear();
-            var attachmentText = images.Length > 0
-                ? "\n图片附件：" + string.Join("、", images.Select(image => image.Name)) : "";
-            if (files.Length > 0)
-                attachmentText += "\n文本与代码附件：" + string.Join("、", files.Select(file => file.Name));
-            BeginStreamingReply(text + attachmentText);
-            SetStatus("任务进行中。");
-            try
+        }
+        else
+        {
+            UpdateComposerCommands();
+            Log("已发送下一条排队消息。", "排队消息已发送");
+        }
+        latestReply.Clear();
+        readReplyMenu.Enabled = false;
+        turnResults.Clear();
+        var attachmentText = images.Length > 0
+            ? "\n图片附件：" + string.Join("、", images.Select(image => image.Name)) : "";
+        if (files.Length > 0)
+            attachmentText += "\n文本与代码附件：" + string.Join("、", files.Select(file => file.Name));
+        BeginStreamingReply(text + attachmentText);
+        SetStatus("任务进行中。");
+        try
+        {
+            var result = await current.PromptAsync(activeSession, text, images.Select(image => image.Payload).ToArray(),
+                files.Select(file => file.Payload).ToArray());
+            sending.Sending.Remove(pending);
+            RememberDraft(owner, sending);
+            var reason = StringValue(result, "stopReason");
+            FinishStreamingReply(reason == "cancelled" ? "任务已中止，尚无正文。" : "任务已结束，CLI 未返回正文。");
+            if (closing || sessionId != activeSession || !ReferenceEquals(agent, current))
+                return false;
+            lastTurnUsage = SessionUsage.LastTurn(result);
+            if (reason == "cancelled")
+                SetStatus(cancelRequested ? "任务已中止。" : "官方 CLI 结束了本轮。按 Ctrl+L 查看任务记录。", speak: true);
+            else if (reason == "end_turn")
             {
-                var result = await current.PromptAsync(activeSession, text, images.Select(image => image.Payload).ToArray(),
-                    files.Select(file => file.Payload).ToArray());
-                sending.Sending.Remove(pending);
-                RememberDraft(owner, sending);
-                var reason = StringValue(result, "stopReason");
-                FinishStreamingReply(reason == "cancelled" ? "任务已中止，尚无正文。" : "任务已结束，CLI 未返回正文。");
-                if (closing || sessionId != activeSession || !ReferenceEquals(agent, current))
-                    return;
-                lastTurnUsage = SessionUsage.LastTurn(result);
-                if (reason == "cancelled")
-                    SetStatus(cancelRequested ? "任务已中止。" : "官方 CLI 结束了本轮。按 Ctrl+L 查看任务记录。", speak: true);
-                else if (reason == "end_turn")
-                {
-                    bool spoken = settings.AutoReadReply &&
-                        ScreenReaderSpeech.TrySpeak(latestReply.ToString().Trim(), interrupt: false);
-                    SetStatus("回复已完成。可在消息列表阅读全文。", speak: !spoken);
-                }
-                else
-                    SetStatus($"Agent 本轮已结束。原因：{AgentText.Visible(reason ?? "CLI 未报告")}。");
+                bool spoken = settings.AutoReadReply &&
+                    ScreenReaderSpeech.TrySpeak(latestReply.ToString().Trim(), interrupt: false);
+                SetStatus("回复已完成。可在消息列表阅读全文。", speak: !spoken);
+            }
+            else
+                SetStatus($"Agent 本轮已结束。原因：{AgentText.Visible(reason ?? "CLI 未报告")}。");
 
-                RememberActive();
-                PopulateSessions();
-            }
-            catch
+            RememberActive();
+            PopulateSessions();
+            return reason == "end_turn" && !cancelRequested;
+        }
+        catch
+        {
+            if (!closing)
             {
-                if (!closing)
-                {
-                    sending.Sending.Remove(pending);
-                    RestoreFailedDraft(sending, owner, text, images, files);
-                    RememberDraft(owner, sending);
-                }
-                throw;
+                sending.Sending.Remove(pending);
+                RestoreQueuedDraft();
+                RestoreFailedDraft(sending, owner, text, images, files);
+                RememberDraft(owner, sending);
             }
-            finally
-            {
-                FinishStreamingReply(cancelRequested ? "任务已中止，尚无正文。" : "任务未完成，CLI 未返回正文。");
-                transcript.EndChunks();
-            }
-        });
+            throw;
+        }
+        finally
+        {
+            FinishStreamingReply(cancelRequested ? "任务已中止，尚无正文。" : "任务未完成，CLI 未返回正文。");
+            transcript.EndChunks();
+        }
     }
 
     private async Task RequestCancellationAsync()
@@ -624,15 +670,30 @@ internal sealed partial class MainForm : Form
     {
         if (sessionId is not { } session || agent is not { Connected: true } current || options.Count == 0)
             return;
-        if (Dialogs.SessionSettings(this, options) is not { } selected ||
+        if (project is not { } directory)
+            return;
+        var previousMode = settings.PermissionForProject(directory);
+        if (Dialogs.SessionSettings(this, options, previousMode) is not { } selected ||
             sessionId != session || !ReferenceEquals(agent, current))
+            return;
+        var mode = selected.Defaults.Mode;
+        bool skippedAutoPreference = mode is not null && !SessionDefaults.CanRememberMode(mode);
+        if (!skippedAutoPreference && mode is not null && mode != previousMode &&
+            MessageBox.Show(this, $"为此项目的新会话记住权限模式“{AgentText.Visible(SessionDefaults.ValueName(options, "mode", mode))}”？\n\n自动模式下，CLI 可能在没有弹窗的情况下执行部分操作。可随时从设置清除项目偏好。",
+                "记住项目权限", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2)
+                != DialogResult.OK)
+            return;
+        if (closing || sessionId != session || !ReferenceEquals(agent, current))
             return;
         var result = await current.ApplySettingsAsync(session, options, selected.Changes);
         if (closing || sessionId != session || !ReferenceEquals(agent, current))
             return;
         options = result.Options;
         var problems = result.Problems.ToList();
-        var remembered = RememberSessionDefaults(selected.Defaults, problems);
+        var defaults = skippedAutoPreference ? selected.Defaults with { Mode = null } : selected.Defaults;
+        var remembered = RememberSessionDefaults(directory, defaults, selected.ClearProjectMode, problems);
+        if (skippedAutoPreference)
+            problems.Add("Auto 模式暂不保存为新会话偏好。" + SessionDefaults.AutoPermissionNotice);
         if (problems.Count == 0)
         {
             if (result.Applied.Count != 0)
@@ -663,21 +724,40 @@ internal sealed partial class MainForm : Form
         }
     }
 
-    private Task<string?> AskPermissionAsync(PermissionRequest request, CancellationToken cancellation) =>
-        AskDuringTurnAsync<string?>(request.SessionId, cancellation, null, () =>
+    private Task<string?> AskPermissionAsync(PermissionRequest request, CancellationToken cancellation)
+    {
+        var wait = Stopwatch.StartNew();
+        return AskDuringTurnAsync<string?>(request.SessionId, cancellation, null, () =>
         {
-            Log(request.Description, "等待工具审批", TaskActivityKind.Interaction);
+            var shown = wait.Elapsed;
             SetStatus("Agent 请求工具审批。请查看详情。", record: false, speak: true);
-            var wait = Stopwatch.StartNew();
             var selected = Dialogs.Permission(Form.ActiveForm ?? this, request, cancellation, RequestCancellationAsync);
             var outcome = cancellation.IsCancellationRequested ? null : request.Options.FirstOrDefault(item => item.Id == selected);
             string summary = "审批结果：" + (outcome?.ToString() ??
                 (cancelRequested ? "已请求中止" : cancellation.IsCancellationRequested ? "CLI 已结束等待" : "已取消"));
-            Log($"{summary}\n等待约 {wait.Elapsed.TotalSeconds:0} 秒。\n\n{request.Description}", summary, TaskActivityKind.Interaction);
+            Log($"{summary}\n在显示审批框前等待约 {shown.TotalSeconds:0} 秒，总计约 {wait.Elapsed.TotalSeconds:0} 秒。\n\n{request.Description}", summary, TaskActivityKind.Interaction);
             if (!cancellation.IsCancellationRequested)
                 SetStatus("审批已提交，等待 Agent 继续。", kind: TaskActivityKind.Interaction);
             return outcome?.Id;
+        }, beforeDialog: async () =>
+        {
+            Log(request.Description, "等待工具审批", TaskActivityKind.Interaction);
+            if (IsAppForeground())
+                return;
+            SetStatus("Agent 请求工具审批。切回 MyAntigravity 查看。", record: false);
+            try { await WaitForApprovalForegroundAsync(cancellation); }
+            catch (OperationCanceledException)
+            {
+                if (!closing)
+                {
+                    var reason = cancelRequested ? "任务已中止" : "CLI 已取消审批或连接已断开";
+                    Log($"{reason}。在后台等待约 {wait.Elapsed.TotalSeconds:0} 秒。\n\n{request.Description}",
+                        "审批在后台等待时结束", TaskActivityKind.Interaction);
+                }
+                throw;
+            }
         });
+    }
 
     private Task<ElicitationResponse> AskQuestionAsync(ElicitationRequest request, CancellationToken cancellation) =>
         AskDuringTurnAsync(request.SessionId, cancellation, ElicitationResponse.Cancelled, () =>
@@ -697,7 +777,7 @@ internal sealed partial class MainForm : Form
             return answer;
         });
 
-    private Task<T> AskDuringTurnAsync<T>(string requestingSession, CancellationToken cancellation, T fallback, Func<T> ask)
+    private Task<T> AskDuringTurnAsync<T>(string requestingSession, CancellationToken cancellation, T fallback, Func<T> ask, Func<Task>? beforeDialog = null)
     {
         var response = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
         Post(async () =>
@@ -715,7 +795,13 @@ internal sealed partial class MainForm : Form
 
                 interactionOpen = true;
                 UpdateComposerCommands();
-                try { response.TrySetResult(ask()); }
+                try
+                {
+                    if (beforeDialog is not null)
+                        await beforeDialog();
+                    response.TrySetResult(closing || cancellation.IsCancellationRequested || sessionId != requestingSession
+                        ? fallback : ask());
+                }
                 finally
                 {
                     interactionOpen = false;
@@ -871,13 +957,32 @@ internal sealed partial class MainForm : Form
 
     private Task ShowStatusAsync()
     {
-        string[] lines = sessionId is null ? [context.Text, status.Text]
-            : [context.Text, status.Text,
+        var lines = new List<string> { context.Text, status.Text };
+        if (sessionId is not null)
+        {
+            lines.AddRange([
                 $"模型：{AgentText.Visible(SessionDefaults.CurrentName(options, "model") ?? "未报告")}",
-                $"权限模式：{AgentText.Visible(SessionDefaults.CurrentName(options, "mode") ?? "未报告")}",
+                $"当前会话权限（ACP 报告）：{AgentText.Visible(SessionDefaults.CurrentName(options, "mode") ?? "未报告")}",
                 $"推理等级：{AgentText.Visible(SessionDefaults.CurrentName(options, "thought_level") ?? "未报告")}",
                 contextUsage ?? "上下文用量：官方 CLI 暂未报告。",
-                lastTurnUsage ?? "最近一轮 token：官方 CLI 暂未报告。"];
+                lastTurnUsage ?? "最近一轮 token：官方 CLI 暂未报告。"]);
+        }
+        if (project is not null)
+        {
+            var mode = settings.DefaultsForProject(project).Mode;
+            var scope = settings.PermissionForProject(project) is not null ? "此项目" : "本机全局";
+            lines.Add(mode is null ? "新会话权限偏好：由 CLI 决定。" :
+                $"新会话权限偏好（{scope}）：{AgentText.Visible(SessionDefaults.ValueName(options, "mode", mode))}。");
+        }
+        lines.Add(settings.Sandbox ? "CLI 启动时请求启用终端沙箱。" : "CLI 启动时未指定终端沙箱。");
+        if (project is not null)
+        {
+            var saved = settings.PermissionForProject(project) ?? settings.NewSessionDefaults?.Mode;
+            if (saved is not null && !SessionDefaults.CanRememberMode(saved))
+                lines.Add("已保存的 Auto 偏好暂不向新会话应用。");
+        }
+        lines.Add("");
+        lines.Add(SessionDefaults.AutoPermissionNotice);
         Dialogs.Text(this, "当前状态", string.Join("\n", lines));
         return Task.CompletedTask;
     }
@@ -915,6 +1020,7 @@ internal sealed partial class MainForm : Form
         base.OnFormClosing(e);
         if (e.Cancel || closing)
             return;
+        RestoreQueuedDraft();
         RememberReadingPosition();
         if (draftOwner is { } owner)
             RememberDraft(owner, draft);
@@ -923,6 +1029,8 @@ internal sealed partial class MainForm : Form
         startupUpdate?.Cancel();
         workspaceSave.Dispose();
         messageRefresh.Dispose();
+        notificationTimeout?.Dispose();
+        backgroundNotification?.Dispose();
         if (agent is not null)
         {
             var current = agent;

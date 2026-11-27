@@ -3,6 +3,7 @@ param(
     [string]$DotNet = 'dotnet',
     [string]$Iscc = '',
     [string]$Notes = '',
+    [switch]$StageOnly,
     [uri]$GitCodeDownloadUrl
 )
 
@@ -29,7 +30,15 @@ function Confirm-LocalDirectory([string]$Path) {
 
 function Clear-BuildDirectory([string]$Path) {
     Confirm-LocalDirectory $Path
-    if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Recurse -Force }
+    if (!(Test-Path -LiteralPath $Path)) { return }
+    $entries = @(Get-ChildItem -LiteralPath $Path -Recurse -Force)
+    if ($entries | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint } | Select-Object -First 1) {
+        throw "Unexpected reparse point in build directory: $Path"
+    }
+    foreach ($file in ($entries | Where-Object { !$_.PSIsContainer -and $_.IsReadOnly })) {
+        $file.IsReadOnly = $false
+    }
+    Remove-Item -LiteralPath $Path -Recurse -Force
 }
 
 foreach ($path in @($work, $stage, $previous, $final, $buildTemp)) { Confirm-LocalDirectory $path }
@@ -79,6 +88,7 @@ Clear-BuildDirectory $previous
 Clear-BuildDirectory $stage
 $app = Join-Path $stage 'app'
 $licenses = Join-Path $app 'licenses'
+$keepStage = $false
 New-Item -ItemType Directory -Force -Path $licenses | Out-Null
 Push-Location $root
 try {
@@ -121,6 +131,12 @@ try {
         [IO.File]::WriteAllText((Join-Path $stage "update-gitcode-$channel.json"), ($manifest | ConvertTo-Json), $encoding)
     }
 
+    if ($StageOnly) {
+        $keepStage = $true
+        Write-Output "Staged release $version -> $stage"
+        return
+    }
+
     if (Test-Path -LiteralPath $final) { Move-Item -LiteralPath $final -Destination $previous }
     try { Move-Item -LiteralPath $stage -Destination $final }
     catch {
@@ -132,5 +148,5 @@ try {
 }
 finally {
     Pop-Location
-    Clear-BuildDirectory $stage
+    if (!$keepStage) { Clear-BuildDirectory $stage }
 }

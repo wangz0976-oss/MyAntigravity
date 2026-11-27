@@ -41,6 +41,8 @@ internal sealed partial class MainForm : Form
     private readonly ToolStripMenuItem additionalDirectories = Item("附加工作目录 (&W)", Keys.Control | Keys.Shift | Keys.W);
     private readonly ToolStripMenuItem commandPalette = Item("插入官方命令 (&P)", Keys.Control | Keys.Shift | Keys.P);
     private readonly ToolStripMenuItem commandFinder = Item("查找软件功能 (&F)", Keys.Control | Keys.Shift | Keys.K);
+    private readonly ToolStripMenuItem queuedFollowUps = Item("查看排队消息 (&Q)");
+    private readonly ToolStripMenuItem withdrawFollowUp = Item("撤回最后一条排队消息 (&W)");
     private readonly ToolStripMenuItem sendMessageMenu = Item("发送消息 (&S)");
     private readonly ToolStripMenuItem settingsMenu = Item("打开设置 (&S)", Keys.Control | Keys.Oemcomma);
     private readonly ToolStripMenuItem sessionDefaultsMenu = Item("新会话默认 (&N)");
@@ -96,7 +98,7 @@ internal sealed partial class MainForm : Form
         messageMenu.DropDownItems.AddRange([
             Item("转到消息列表 (&J)", action: () => { messages.Focus(); return Task.CompletedTask; }),
             openMessage, speakMessage, copyMessage, findMessage, readReplyMenu, readConversation, exportText,
-            new ToolStripSeparator(), sendMessageMenu, steerMenu, attachments, commandPalette]);
+            new ToolStripSeparator(), sendMessageMenu, queuedFollowUps, withdrawFollowUp, steerMenu, attachments, commandPalette]);
         var taskMenu = Item("任务 (&T)");
         var cancelMenu = Item("中止任务 (&X)", Keys.Control | Keys.Shift | Keys.X);
         cancelMenu.Click += async (_, _) => await RequestCancellationAsync();
@@ -148,7 +150,8 @@ internal sealed partial class MainForm : Form
                 会话列表中按 Shift+F10 打开操作菜单。Ctrl+Shift+A 归档所选会话，Ctrl+Shift+H 打开本地归档。
                 项目、会话或归档列表中按 Delete 打开移除确认。项目文件和官方会话均保留。
                 默认 Ctrl+Enter 发送，Enter 换行。可在常规设置中交换。Ctrl+Shift+X 中止任务。
-                Ctrl+Shift+Enter：把输入框里的文字追加给正在运行的任务。
+                生成时按发送键排队。从“消息 → 查看排队消息”查看全文或撤回所选项。
+                Ctrl+Shift+Enter：把输入框里的文字立即追加给正在运行的任务。
                 Ctrl+Shift+I：图片附件。在附件窗口按 Ctrl+O 添加，回车查看，Delete 从草稿移除。
                 Ctrl+Shift+J：文本与代码附件。Ctrl+O 添加，回车读原文，Delete 从草稿移除。
                 Ctrl+Shift+P：搜索并填入官方命令，确认后再发送。

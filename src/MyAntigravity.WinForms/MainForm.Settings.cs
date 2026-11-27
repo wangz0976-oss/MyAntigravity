@@ -52,11 +52,16 @@ internal sealed partial class MainForm
         };
         var startupSession = new CheckBox { Text = "启动时恢复上次会话 (&H)", AutoSize = true,
             Checked = settings.RestoreSessionOnStartup, TabIndex = 1 };
+        var approvalPopup = new CheckBox { Text = "后台等待审批时显示 Windows 通知 (&P)", AutoSize = true,
+            Checked = settings.BackgroundApprovalNotifications };
+        var completionPopup = new CheckBox { Text = "后台任务全部完成时显示 Windows 通知 (&F)", AutoSize = true,
+            Checked = settings.BackgroundCompletionNotifications };
         var tabs = new TabControl { Dock = DockStyle.Fill, AccessibleName = "设置分类", TabIndex = 0 };
         tabs.TabPages.AddRange([
             SettingsPage("常规", Caption("发送消息按键"), sendKey, startupSession),
             SettingsPage("CLI 连接", Caption("CLI 完整路径（留空时自动检测）"), path, Buttons(1, browse, install), sandbox),
             SettingsPage("读屏", announce, autoRead),
+            SettingsPage("通知", approvalPopup, completionPopup),
             SettingsPage("更新", Caption("更新渠道"), channel, startupUpdates)]);
         var save = new Button { Text = "保存 (&S)", AutoSize = true };
         var back = new Button { Text = "取消 (&C)", AutoSize = true, DialogResult = DialogResult.Cancel };
@@ -88,6 +93,8 @@ internal sealed partial class MainForm
         settings.Announce = announce.Checked;
         settings.EnterToSend = sendKey.SelectedIndex == 1;
         settings.AutoReadReply = autoRead.Checked;
+        settings.BackgroundApprovalNotifications = approvalPopup.Checked;
+        settings.BackgroundCompletionNotifications = completionPopup.Checked;
         settings.Sandbox = sandbox.Checked;
         settings.UpdateChannel = channel.SelectedIndex == 0 ? "stable" : "beta";
         settings.CheckUpdatesOnStartup = startupUpdates.Checked;

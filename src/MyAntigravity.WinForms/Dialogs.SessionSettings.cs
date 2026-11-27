@@ -2,9 +2,9 @@ namespace MyAntigravity;
 
 internal static partial class Dialogs
 {
-    internal sealed record SessionSettingsSelection(IReadOnlyList<SessionSettingChange> Changes, SessionDefaults Defaults);
+    internal sealed record SessionSettingsSelection(IReadOnlyList<SessionSettingChange> Changes, SessionDefaults Defaults, bool ClearProjectMode);
 
-    internal static SessionSettingsSelection? SessionSettings(Form owner, IReadOnlyList<SessionOption> options)
+    internal static SessionSettingsSelection? SessionSettings(Form owner, IReadOnlyList<SessionOption> options, string? projectMode)
     {
         using var form = Window("模型、权限模式与推理设置", new Size(690, 555));
         var optionsPanel = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1 };
@@ -45,7 +45,8 @@ internal static partial class Dialogs
                     ?? option.Current ?? "未报告";
                 details.Text = AgentText.Visible(string.Join("\n\n", new[] { label, $"当前值：{current}",
                     chosen is not null && chosen.Id != option.Current ? $"待应用：{chosen.Name}" : null,
-                    option.Description, chosen?.Description }.Where(text => !string.IsNullOrWhiteSpace(text))));
+                    option.Description, chosen?.Description, option.Category == "mode" ? SessionDefaults.AutoPermissionNotice : null }
+                    .Where(text => !string.IsNullOrWhiteSpace(text))));
                 details.Select(0, 0);
             }
             values.Enter += (_, _) => ShowDescription();
@@ -59,8 +60,9 @@ internal static partial class Dialogs
         foreach (var option in options.Where(option => !inputs.Any(input => input.Option.Id == option.Id)).ToArray())
             AddField(AgentText.Visible(option.Label), option);
 
-        var rememberMode = new CheckBox { Text = "把所选权限模式设为新会话默认 (&P)", AutoSize = true, TabIndex = 1,
-            Enabled = inputs.Any(input => input.Option.Category == "mode") };
+        var rememberMode = new CheckBox { Text = "为此项目的新会话记住所选权限模式 (&P)", AutoSize = true, TabIndex = 1,
+            Enabled = inputs.Any(input => input.Option.Category == "mode"), Checked = projectMode is not null,
+            AccessibleDescription = "当前版本可保存经 CLI 确认的权限模式。Auto 模式不保存为新会话偏好。" };
         var rememberModel = new CheckBox { Text = "把所选模型和推理等级设为新会话默认 (&N)", AutoSize = true, TabIndex = 2,
             Enabled = inputs.Any(input => input.Option.Category == "model") };
         var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6 };
@@ -90,7 +92,12 @@ internal static partial class Dialogs
         var changes = selected
             .Where(input => input.Choice is not null && input.Option.Current != input.Choice.Id)
             .Select(input => new SessionSettingChange(input.Option.Id, input.Choice!.Id, input.Option.Label)).ToArray();
-        return new(changes, new SessionDefaults(rememberMode.Checked ? Value("mode") : null,
-            rememberModel.Checked ? Value("model") : null, rememberModel.Checked ? Value("thought_level") : null));
+        bool modeChanged = selected.Any(input => input.Option.Category == "mode" &&
+            input.Choice is not null && input.Option.Current != input.Choice.Id);
+        var rememberedMode = rememberMode.Enabled && rememberMode.Checked && (projectMode is null || modeChanged)
+            ? Value("mode") : null;
+        return new(changes, new SessionDefaults(rememberedMode,
+            rememberModel.Checked ? Value("model") : null, rememberModel.Checked ? Value("thought_level") : null),
+            rememberMode.Enabled && !rememberMode.Checked && projectMode is not null);
     }
 }

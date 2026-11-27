@@ -38,8 +38,65 @@ if (args is ["--live", var executable])
     await LiveAsync(Path.GetFullPath(executable));
     return;
 }
+if (args is ["--live-permissions", var permissionExecutable])
+{
+    Environment.ExitCode = await LivePermissions.RunAsync(Path.GetFullPath(permissionExecutable), scratch);
+    return;
+}
 
 int testCount = 0;
+await Case("项目权限偏好隔离、保存和升级兼容", () =>
+{
+    var first = Directory.CreateDirectory(Path.Combine(scratch, "permission-project", "first")).FullName;
+    var second = Directory.CreateDirectory(Path.Combine(scratch, "permission-project", "second")).FullName;
+    var store = new SettingsFile(Path.Combine(scratch, "permission-project", "data"));
+    var original = new LocalSettings { NewSessionDefaults = new("default", "model-a", "high") };
+    original.RememberProject(first);
+    original.RememberProject(second);
+    original.SetProjectPermission(first + Path.DirectorySeparatorChar, "accept-edits");
+    store.Save(original);
+    var reloaded = store.Load();
+    Check(reloaded.DefaultsForProject(first) == new SessionDefaults("accept-edits", "model-a", "high") &&
+        reloaded.DefaultsForProject(second) == original.NewSessionDefaults, "项目覆盖权限，其他项目沿用旧版全局偏好");
+    Check(reloaded.DefaultsForProject(first).Changes().Any(change => change.Category == "mode" && change.Value == "accept-edits"),
+        "新会话提交所保存的官方 ACP 权限值");
+    reloaded.SetProjectPermission(second, "auto");
+    Check(reloaded.DefaultsForProject(second).Mode is null && !SessionDefaults.CanRememberMode("auto"),
+        "已保存的 Auto 不自动应用到新会话");
+    reloaded.SetProjectPermission(second, null);
+    reloaded.NewSessionDefaults = new("auto", "model-a");
+    Check(reloaded.DefaultsForProject(second) == new SessionDefaults(null, "model-a"),
+        "旧版全局 Auto 不自动应用，模型偏好保留");
+    reloaded.NewSessionDefaults = original.NewSessionDefaults;
+    Check(reloaded.RemoveProject(first) && reloaded.PermissionForProject(first) is null &&
+        reloaded.DefaultsForProject(first).Mode == "default", "移除项目会取消其权限偏好");
+    Check(reloaded.BackgroundApprovalNotifications && !reloaded.BackgroundCompletionNotifications,
+        "升级后默认提醒审批，由用户决定是否提醒完成");
+    reloaded.BackgroundApprovalNotifications = false;
+    reloaded.BackgroundCompletionNotifications = true;
+    store.Save(reloaded);
+    var notifications = store.Load();
+    Check(!notifications.BackgroundApprovalNotifications && notifications.BackgroundCompletionNotifications, "分别保存两种提醒的设置");
+    return Task.CompletedTask;
+});
+await Case("排队追问按顺序发送、撤回及中止恢复", () =>
+{
+    var queue = new FollowUpQueue();
+    Check(!queue.Enqueue("   ") && queue.TakeNext() is null, "空消息无需排队");
+    Check(queue.Enqueue("第一条") && queue.Enqueue("第二条") && queue.Enqueue("撤回这条"), "可记录多条追问");
+    Check(queue.WithdrawLatest() == "撤回这条" && queue.TakeNext() == "第一条", "撤回和出队保持原有顺序");
+    Check(queue.PendingTexts.SequenceEqual(["第二条"]), "保留待发追问可写回本机草稿");
+    Check(queue.Drain().SequenceEqual(["第二条"]) && queue.Count == 0, "任务未完成时可退回仍然排队的内容");
+    for (int i = 0; i < FollowUpQueue.Capacity; i++)
+        Check(queue.Enqueue(i.ToString()), "可排队至容量");
+    Check(!queue.Enqueue("超出") && queue.Drain().Last() == (FollowUpQueue.Capacity - 1).ToString(), "达到容量时保留已排队内容");
+    Check(queue.Enqueue("两条相同") && queue.Enqueue("两条相同") && queue.Enqueue("最后一条"), "可以排队相同的文字");
+    var entries = queue.Entries.ToArray();
+    Check(queue.Withdraw(entries[1]) && !queue.Withdraw(entries[1]) && ReferenceEquals(entries[0], queue.Entries.First()),
+        "列表只撤回选中的一条，快照过期时不会撤回另一条同文消息");
+    Check(queue.Drain().SequenceEqual(["两条相同", "最后一条"]), "部分撤回仍保持剩余消息顺序");
+    return Task.CompletedTask;
+});
 await Case("跨项目会话索引和 UTF-8 正文导出", async () =>
 {
     var first = Path.Combine(scratch, "索引甲");

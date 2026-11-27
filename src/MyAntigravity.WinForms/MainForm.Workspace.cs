@@ -34,8 +34,10 @@ internal sealed partial class MainForm
 
     private void RememberDraft((string Project, string Session) owner, ComposerDraft current)
     {
-        string text = string.Join(Environment.NewLine,
-            current.Sending.Select(pending => pending.Text).Append(current.Text).Where(part => part.Length != 0));
+        var pending = current.Sending.Select(message => message.Text);
+        if (ReferenceEquals(queueDraft, current))
+            pending = pending.Concat(followUps.PendingTexts);
+        string text = string.Join(Environment.NewLine, pending.Append(current.Text).Where(part => part.Length != 0));
         QueueWorkspaceSave(settings.SaveDraft(owner.Session, owner.Project, text));
     }
 
